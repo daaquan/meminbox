@@ -11,7 +11,7 @@ import { MemoryService } from "../memory.js";
  *
  * Every MCP client (Claude Code, Codex, Cursor, ...) pointed at the same
  * Supabase project reads and writes the same memory. Writes default to the
- * inbox; search reads active memory. Set MEMORY_ACTOR per client so the
+ * inbox; search reads active memory. Set MEMINBOX_ACTOR per client so the
  * audit log and provenance show WHICH agent wrote what.
  */
 const cfg = loadConfig();

@@ -36,7 +36,7 @@ export async function extractCandidates(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: opts.model ?? process.env.EXTRACT_MODEL ?? "gpt-4o-mini",
+      model: opts.model ?? cfg.extractModel,
       response_format: { type: "json_object" },
       messages: [
         {

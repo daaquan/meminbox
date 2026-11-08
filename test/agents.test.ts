@@ -10,7 +10,7 @@ describe("mergeMcpJson", () => {
   it("creates a fresh config with the meminbox entry", () => {
     const out = JSON.parse(mergeMcpJson(null, mcpServerEntry("claude-code")));
     assert.equal(out.mcpServers.meminbox.command, "meminbox-mcp");
-    assert.equal(out.mcpServers.meminbox.env.MEMORY_ACTOR, "claude-code");
+    assert.equal(out.mcpServers.meminbox.env.MEMINBOX_ACTOR, "claude-code");
   });
 
   it("preserves other servers and replaces an old meminbox entry", () => {
@@ -23,7 +23,7 @@ describe("mergeMcpJson", () => {
     const out = JSON.parse(mergeMcpJson(existing, mcpServerEntry("cursor")));
     assert.equal(out.mcpServers.other.command, "other-mcp");
     assert.equal(out.mcpServers.meminbox.command, "meminbox-mcp");
-    assert.equal(out.mcpServers.meminbox.env.MEMORY_ACTOR, "cursor");
+    assert.equal(out.mcpServers.meminbox.env.MEMINBOX_ACTOR, "cursor");
   });
 });
 
@@ -31,7 +31,7 @@ describe("upsertCodexToml", () => {
   it("appends a meminbox section to an empty config", () => {
     const out = upsertCodexToml("", "codex");
     assert.ok(out.includes("[mcp_servers.meminbox]"));
-    assert.ok(out.includes('MEMORY_ACTOR = "codex"'));
+    assert.ok(out.includes('MEMINBOX_ACTOR = "codex"'));
   });
 
   it("replaces an existing meminbox section without duplicating it", () => {

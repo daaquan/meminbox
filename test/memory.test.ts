@@ -1,18 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Config } from "../src/config.js";
 import { combineScores, MemoryService } from "../src/memory.js";
+import { cfg } from "./helpers/config.js";
 import { fakeDb } from "./helpers/fake-db.js";
-
-export const cfg: Config = {
-  supabaseUrl: "https://x.supabase.co",
-  supabaseServiceRoleKey: "sb_secret_x",
-  openaiApiKey: null,
-  embeddingModel: "text-embedding-3-small",
-  embeddingDims: 1536,
-  defaultProject: "default",
-  actor: "test",
-};
 
 describe("MemoryService schema names", () => {
   it("only touches meminbox_* tables and functions", async () => {

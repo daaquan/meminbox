@@ -34,7 +34,7 @@ idea) as a component — in that order, on purpose:
 5. **Keyword search is a first-class mode.**
    At personal scale (hundreds–thousands of documents), full-text +
    substring search carries most of the weight. Embeddings are optional:
-   no `OPENAI_API_KEY`, no vector search, everything else still works.
+   no `MEMINBOX_OPENAI_API_KEY`, no vector search, everything else still works.
 
 ## Architecture
 
@@ -113,7 +113,7 @@ meminbox configure-agent --tool claude-code   # or: codex | cursor | claude-desk
 This writes the MCP server entry into the client's own config file
 (backing up the previous one to `<file>.bak`). The entry contains **no
 secrets** — the server reads `~/.meminbox/.env` itself. Each client gets
-its own `MEMORY_ACTOR`, so provenance shows which agent wrote what.
+its own `MEMINBOX_ACTOR`, so provenance shows which agent wrote what.
 Use `--print` to preview the entry without writing anything.
 Restart the client afterwards.
 
@@ -123,6 +123,15 @@ Restart the client afterwards.
 meminbox add --title "How we deploy" --text "Staging first, then prod. See runbook." --active
 meminbox search "deploy"
 ```
+
+### Configuration
+
+All settings are `MEMINBOX_*` (see `.env.example`). meminbox never reads
+generic names like `SUPABASE_URL` or `OPENAI_API_KEY` from your shell or
+from a project's `.env`, so it cannot be pointed at an app's database or
+an unrelated API key by accident. Precedence: `MEMINBOX_*` environment
+variables, then `~/.meminbox/.env`, then `MEMINBOX_*` lines in `./.env`.
+A `~/.meminbox/.env` written by meminbox 0.3 (unprefixed names) still works.
 
 ### Upgrading
 

@@ -8,7 +8,7 @@ export const AGENT_TOOLS = [
     "claude-desktop",
 ];
 export function mcpServerEntry(actor) {
-    return { command: "meminbox-mcp", args: [], env: { MEMORY_ACTOR: actor } };
+    return { command: "meminbox-mcp", args: [], env: { MEMINBOX_ACTOR: actor } };
 }
 /** Merge the meminbox entry into an MCP JSON config (pure; unit-tested). */
 export function mergeMcpJson(existingText, entry) {
@@ -25,7 +25,7 @@ export function codexTomlBlock(actor) {
         "args = []",
         "",
         "[mcp_servers.meminbox.env]",
-        `MEMORY_ACTOR = "${actor}"`,
+        `MEMINBOX_ACTOR = "${actor}"`,
         "",
     ].join("\n");
 }

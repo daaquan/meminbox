@@ -2,10 +2,13 @@ import type { Config } from "./config.js";
 
 /**
  * Embeddings are OPTIONAL and DERIVED.
- * - No OPENAI_API_KEY -> returns null, callers fall back to keyword search.
- * - The embedding model/dims are configuration, not truth: changing them
- *   only means the chunk index must be rebuilt (`meminbox reindex`).
+ * - No MEMINBOX_OPENAI_API_KEY -> returns null, callers fall back to keyword search.
+ * - The model is configuration, not truth: changing it only means the
+ *   chunk index must be rebuilt (`meminbox reindex`).
  */
+
+/** Width of meminbox_document_chunks.embedding — fixed by the schema. */
+export const EMBEDDING_DIMS = 1536;
 export async function embedText(
   cfg: Config,
   text: string,
@@ -17,7 +20,13 @@ export async function embedText(
       Authorization: `Bearer ${cfg.openaiApiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model: cfg.embeddingModel, input: text }),
+    body: JSON.stringify({
+      model: cfg.embeddingModel,
+      input: text,
+      // text-embedding-3-* can shorten to the schema's width (e.g. -large);
+      // older models reject the parameter and are fixed at 1536 anyway.
+      ...(cfg.embeddingModel.startsWith("text-embedding-3") ? { dimensions: EMBEDDING_DIMS } : {}),
+    }),
   });
   if (!res.ok) {
     throw new Error(`Embedding request failed: ${res.status} ${await res.text()}`);
@@ -27,10 +36,10 @@ export async function embedText(
   };
   const vec = json.data[0]?.embedding;
   if (!vec) throw new Error("Embedding response had no vector");
-  if (vec.length !== cfg.embeddingDims) {
+  if (vec.length !== EMBEDDING_DIMS) {
     throw new Error(
-      `Embedding dims mismatch: model returned ${vec.length}, schema expects ${cfg.embeddingDims}. ` +
-        `Set EMBEDDING_DIMS to match the model, or keep the default model.`,
+      `Embedding dims mismatch: ${cfg.embeddingModel} returned ${vec.length} dimensions, but meminbox stores ${EMBEDDING_DIMS}. ` +
+        "Use an OpenAI text-embedding-3 model (or text-embedding-ada-002) as MEMINBOX_EMBEDDING_MODEL.",
     );
   }
   return vec;

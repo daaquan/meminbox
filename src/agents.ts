@@ -13,7 +13,7 @@ import { dirname, join } from "node:path";
  * agent client.
  *
  * The generated entries contain NO secrets: the server reads
- * ~/.meminbox/.env itself. The only per-client setting is MEMORY_ACTOR,
+ * ~/.meminbox/.env itself. The only per-client setting is MEMINBOX_ACTOR,
  * which is what makes provenance say "claude-code wrote this".
  */
 
@@ -33,7 +33,7 @@ export interface McpServerEntry {
 }
 
 export function mcpServerEntry(actor: string): McpServerEntry {
-  return { command: "meminbox-mcp", args: [], env: { MEMORY_ACTOR: actor } };
+  return { command: "meminbox-mcp", args: [], env: { MEMINBOX_ACTOR: actor } };
 }
 
 /** Merge the meminbox entry into an MCP JSON config (pure; unit-tested). */
@@ -55,7 +55,7 @@ export function codexTomlBlock(actor: string): string {
     "args = []",
     "",
     "[mcp_servers.meminbox.env]",
-    `MEMORY_ACTOR = "${actor}"`,
+    `MEMINBOX_ACTOR = "${actor}"`,
     "",
   ].join("\n");
 }

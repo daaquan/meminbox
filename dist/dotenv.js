@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 /** Directory holding the user's meminbox configuration (~/.meminbox). */
@@ -32,22 +32,23 @@ export function parseDotEnv(text) {
     return out;
 }
 /**
- * Load configuration files into process.env WITHOUT overriding variables
- * that are already set. Lookup order:
- *   1. ~/.meminbox/.env  (written by `meminbox init` — the normal case)
- *   2. ./.env            (project-local, for development)
- * Real environment variables always win over both files.
+ * Read the configuration files WITHOUT touching process.env (config.ts
+ * decides which keys from which file are trusted).
  */
-export function loadEnvFiles() {
-    for (const path of [meminboxEnvPath(), join(process.cwd(), ".env")]) {
-        if (!existsSync(path))
-            continue;
-        const parsed = parseDotEnv(readFileSync(path, "utf8"));
-        for (const [key, value] of Object.entries(parsed)) {
-            if (process.env[key] === undefined)
-                process.env[key] = value;
-        }
-    }
+export function readConfigFiles(cwd = process.cwd()) {
+    const read = (path) => existsSync(path) ? parseDotEnv(readFileSync(path, "utf8")) : {};
+    return { home: read(meminboxEnvPath()), local: read(join(cwd, ".env")) };
+}
+/**
+ * Write a secrets file readable only by the owner. writeFileSync's `mode`
+ * applies only when the file is created, so an existing file (or
+ * directory) with looser permissions is tightened explicitly.
+ */
+export function writePrivateFile(path, dir, text) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700);
+    writeFileSync(path, text, { mode: 0o600 });
+    chmodSync(path, 0o600);
 }
 /** Serialise values back to .env text (used by `init`). */
 export function formatDotEnv(values) {

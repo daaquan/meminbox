@@ -1,9 +1,9 @@
 import { createInterface } from "node:readline/promises";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
-import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
+import { formatDotEnv, meminboxEnvPath, meminboxHome, writePrivateFile } from "./dotenv.js";
 import { SetupCancelled } from "./errors.js";
 import { applySqlFileViaCli, classifySupabaseKey, detectSupabaseCli, getServiceKeyViaCli, refFromSupabaseUrl, supabaseUrlForRef, } from "./supabase-cli.js";
 function parseFlags(argv) {
@@ -12,10 +12,10 @@ function parseFlags(argv) {
         return i >= 0 ? argv[i + 1] : undefined;
     };
     return {
-        url: get("url") ?? process.env.SUPABASE_URL,
-        serviceKey: get("service-key") ?? process.env.SUPABASE_SERVICE_ROLE_KEY,
-        databaseUrl: get("database-url") ?? process.env.DATABASE_URL,
-        openaiKey: get("openai-key") ?? process.env.OPENAI_API_KEY,
+        url: get("url") ?? process.env.MEMINBOX_SUPABASE_URL,
+        serviceKey: get("service-key") ?? process.env.MEMINBOX_SUPABASE_SERVICE_ROLE_KEY,
+        databaseUrl: get("database-url") ?? process.env.MEMINBOX_DATABASE_URL,
+        openaiKey: get("openai-key") ?? process.env.MEMINBOX_OPENAI_API_KEY,
         actor: get("actor"),
         project: get("project"),
         projectRef: get("project-ref"),
@@ -280,16 +280,15 @@ export async function runInit(argv) {
             listMigrationSql().map((m) => `      supabase/migrations/${m.name} (in the meminbox package)`).join("\n") +
             "\n  • or run: supabase db query --remote=<project-ref> -f supabase/migrations/<file>\n");
     }
-    mkdirSync(meminboxHome(), { recursive: true, mode: 0o700 });
     const values = {
-        SUPABASE_URL: url,
-        SUPABASE_SERVICE_ROLE_KEY: serviceKey,
-        MEMORY_ACTOR: opts.actor ?? "cli",
-        MEMORY_DEFAULT_PROJECT: opts.project ?? "default",
+        MEMINBOX_SUPABASE_URL: url,
+        MEMINBOX_SUPABASE_SERVICE_ROLE_KEY: serviceKey,
+        MEMINBOX_ACTOR: opts.actor ?? "cli",
+        MEMINBOX_DEFAULT_PROJECT: opts.project ?? "default",
     };
     if (openaiKey)
-        values.OPENAI_API_KEY = openaiKey;
-    writeFileSync(envPath, formatDotEnv(values), { mode: 0o600 });
+        values.MEMINBOX_OPENAI_API_KEY = openaiKey;
+    writePrivateFile(envPath, meminboxHome(), formatDotEnv(values));
     console.log(`✓ Configuration saved to ${envPath} (file permissions 0600)`);
     if (databaseUrl)
         console.log("  The migration connection string was used once and was not saved.");
