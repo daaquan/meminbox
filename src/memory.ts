@@ -14,6 +14,26 @@ function toVectorLiteral(vec: number[]): string {
   return `[${vec.join(",")}]`;
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** A freshly written document; `indexError` is set when only the derived index failed. */
+export type WrittenDocument = MemoryDocument & { indexError?: string };
+
+/**
+ * Combine keyword and vector evidence for one document. Probabilistic OR:
+ * a second retrieval path can only RAISE the score, never drag it below
+ * what either path found alone.
+ */
+export function combineScores(keyword: number | undefined, vector: number | undefined): number {
+  const k = Math.min(1, Math.max(0, keyword ?? 0));
+  const v = Math.min(1, Math.max(0, vector ?? 0));
+  return 1 - (1 - k) * (1 - v);
+}
+
+const REINDEX_PAGE = 500;
+
 export class MemoryService {
   constructor(
     private cfg: Config,
@@ -32,6 +52,17 @@ export class MemoryService {
     return data.id as string;
   }
 
+  /** Look a project up WITHOUT creating it (reads must not create namespaces). */
+  async findProjectId(slug: string): Promise<string | null> {
+    const { data, error } = await this.db
+      .from("meminbox_projects")
+      .select("id")
+      .eq("slug", slug)
+      .maybeSingle();
+    if (error) throw new Error(`findProject failed: ${error.message}`);
+    return (data?.id as string | undefined) ?? null;
+  }
+
   async listProjects(): Promise<Array<{ slug: string; name: string }>> {
     const { data, error } = await this.db
       .from("meminbox_projects")
@@ -47,6 +78,12 @@ export class MemoryService {
    * Write a memory document. Default status is "inbox": agent writes are
    * NOT trusted memory until promoted. That staging step is the guardrail
    * against one agent's mistake becoming every agent's fact.
+   *
+   * Once the row is inserted the write has happened: a failure while
+   * building the derived index (e.g. the embedding API is down) is
+   * reported on the result and in the audit log, never thrown — throwing
+   * would make callers retry and store the document twice. `meminbox
+   * reindex` repairs the index later.
    */
   async writeDocument(input: {
     title: string;
@@ -54,7 +91,7 @@ export class MemoryService {
     projectSlug?: string;
     status?: DocumentStatus;
     provenance?: Provenance;
-  }): Promise<MemoryDocument> {
+  }): Promise<WrittenDocument> {
     const projectId = await this.ensureProject(
       input.projectSlug ?? this.cfg.defaultProject,
     );
@@ -77,9 +114,21 @@ export class MemoryService {
       .single();
     if (error) throw new Error(`writeDocument failed: ${error.message}`);
     const doc = data as MemoryDocument;
-    await this.indexDocument(doc);
-    await this.audit("write", doc.id, { status: doc.status });
-    return doc;
+
+    let indexError: string | undefined;
+    try {
+      await this.indexDocument(doc);
+    } catch (err) {
+      indexError = errorMessage(err);
+      console.error(
+        `meminbox: saved "${doc.title}" (${doc.id}) but could not index it for vector search: ${indexError}. Run \`meminbox reindex\` later.`,
+      );
+    }
+    await this.audit("write", doc.id, {
+      status: doc.status,
+      ...(indexError ? { indexError } : {}),
+    });
+    return indexError ? { ...doc, indexError } : doc;
   }
 
   async setStatus(
@@ -91,8 +140,9 @@ export class MemoryService {
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id)
       .select("*")
-      .single();
+      .maybeSingle();
     if (error) throw new Error(`setStatus failed: ${error.message}`);
+    if (!data) throw new Error(`No memory document with id ${id}`);
     await this.audit(
       status === "active" ? "promote" : status === "archived" ? "archive" : "demote",
       id,
@@ -114,13 +164,20 @@ export class MemoryService {
   async listDocuments(opts: {
     status?: DocumentStatus;
     limit?: number;
+    projectSlug?: string;
   } = {}): Promise<MemoryDocument[]> {
+    let projectId: string | null = null;
+    if (opts.projectSlug) {
+      projectId = await this.findProjectId(opts.projectSlug);
+      if (!projectId) return [];
+    }
     let q = this.db
       .from("meminbox_documents")
       .select("*")
       .order("updated_at", { ascending: false })
       .limit(opts.limit ?? 50);
     if (opts.status) q = q.eq("status", opts.status);
+    if (projectId) q = q.eq("project_id", projectId);
     const { data, error } = await q;
     if (error) throw new Error(`listDocuments failed: ${error.message}`);
     return (data ?? []) as MemoryDocument[];
@@ -148,12 +205,26 @@ export class MemoryService {
     if (error) throw new Error(`indexDocument insert failed: ${error.message}`);
   }
 
-  /** Rebuild the derived index for every document. The index is disposable. */
+  /**
+   * Rebuild the derived index for EVERY document (paged by id, so no
+   * library size is silently truncated). The index is disposable.
+   */
   async reindexAll(): Promise<number> {
-    const docs = await this.listDocuments({ limit: 1000 });
-    for (const doc of docs) await this.indexDocument(doc);
-    await this.audit("reindex", null, { documents: docs.length });
-    return docs.length;
+    let total = 0;
+    for (let from = 0; ; from += REINDEX_PAGE) {
+      const { data, error } = await this.db
+        .from("meminbox_documents")
+        .select("id, title, content_md")
+        .order("id")
+        .range(from, from + REINDEX_PAGE - 1);
+      if (error) throw new Error(`reindex listing failed: ${error.message}`);
+      const docs = (data ?? []) as Array<Pick<MemoryDocument, "id" | "title" | "content_md">>;
+      for (const doc of docs) await this.indexDocument(doc);
+      total += docs.length;
+      if (docs.length < REINDEX_PAGE) break;
+    }
+    await this.audit("reindex", null, { documents: total });
+    return total;
   }
 
   // -- search ---------------------------------------------------------------
@@ -161,7 +232,9 @@ export class MemoryService {
   /**
    * Hybrid search: keyword (FTS + substring fallback in SQL) merged with
    * vector similarity when embeddings are configured. Keyword-only is a
-   * fully supported mode — for a personal-scale memory it is often enough.
+   * fully supported mode — for a personal-scale memory it is often enough —
+   * so a failing embedding API degrades search to keyword-only instead of
+   * failing it.
    */
   async search(
     query: string,
@@ -169,13 +242,21 @@ export class MemoryService {
   ): Promise<SearchHit[]> {
     const limit = opts.limit ?? 10;
     const status = opts.status ?? "active";
-    const byDoc = new Map<string, SearchHit>();
+    let projectId: string | null = null;
+    if (opts.projectSlug) {
+      projectId = await this.findProjectId(opts.projectSlug);
+      if (!projectId) return [];
+    }
+
+    type Acc = { documentId: string; title: string; snippet: string; kw?: number; vec?: number };
+    const byDoc = new Map<string, Acc>();
 
     // Keyword path
     const { data: kw, error: kwError } = await this.db.rpc("meminbox_search_documents", {
       p_query: query,
       p_limit: limit * 3,
       p_status: status,
+      p_project_id: projectId,
     });
     if (kwError) throw new Error(`search (keyword) failed: ${kwError.message}`);
     const kwRows = (kw ?? []) as Array<{
@@ -190,18 +271,24 @@ export class MemoryService {
         documentId: row.id,
         title: row.title,
         snippet: row.content_md.slice(0, 300),
-        score: maxRank > 0 ? row.rank / maxRank : 0.5,
-        via: ["keyword"],
+        // substring-only matches have rank 0; they still matched the query
+        kw: maxRank > 0 ? Math.max(row.rank / maxRank, 0.3) : 0.5,
       });
     }
 
     // Vector path (only when an embedding provider is configured)
-    const queryVec = await embedText(this.cfg, query);
+    let queryVec: number[] | null = null;
+    try {
+      queryVec = await embedText(this.cfg, query);
+    } catch (err) {
+      console.error(`meminbox: vector search skipped, using keyword results only: ${errorMessage(err)}`);
+    }
     if (queryVec) {
       const { data: vec, error: vecError } = await this.db.rpc("meminbox_match_chunks", {
         p_embedding: toVectorLiteral(queryVec),
         p_limit: limit * 3,
         p_status: status,
+        p_project_id: projectId,
       });
       if (vecError) throw new Error(`search (vector) failed: ${vecError.message}`);
       const vecRows = (vec ?? []) as Array<{
@@ -211,24 +298,34 @@ export class MemoryService {
         similarity: number;
       }>;
       for (const row of vecRows) {
-        const existing = byDoc.get(row.document_id);
-        if (existing) {
-          existing.via.push("vector");
-          existing.score = Math.min(1, existing.score * 0.5 + row.similarity * 0.5);
-          if (row.chunk.length > 0) existing.snippet = row.chunk.slice(0, 300);
+        const acc = byDoc.get(row.document_id);
+        // Rows arrive best-first; a document's later chunks add nothing.
+        if (acc?.vec !== undefined) continue;
+        if (acc) {
+          acc.vec = row.similarity;
+          if (row.chunk.length > 0) acc.snippet = row.chunk.slice(0, 300);
         } else {
           byDoc.set(row.document_id, {
             documentId: row.document_id,
             title: row.title,
             snippet: row.chunk.slice(0, 300),
-            score: row.similarity,
-            via: ["vector"],
+            vec: row.similarity,
           });
         }
       }
     }
 
     return [...byDoc.values()]
+      .map((a): SearchHit => ({
+        documentId: a.documentId,
+        title: a.title,
+        snippet: a.snippet,
+        score: combineScores(a.kw, a.vec),
+        via: [
+          ...(a.kw !== undefined ? (["keyword"] as const) : []),
+          ...(a.vec !== undefined ? (["vector"] as const) : []),
+        ],
+      }))
       .sort((a, b) => b.score - a.score)
       .slice(0, limit);
   }

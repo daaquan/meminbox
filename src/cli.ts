@@ -18,9 +18,9 @@ import { MemoryService } from "./memory.js";
  *   meminbox migrate [--project-ref <ref> | --database-url <url>]   (after upgrading)
  *
  * Memory:
- *   meminbox search <query>
+ *   meminbox search <query> [--project <slug>]
  *   meminbox add --title <t> [--file <path> | --text <md>] [--active]
- *   meminbox list [--status inbox|active|archived]
+ *   meminbox list [--status inbox|active|archived] [--project <slug>]
  *   meminbox promote <id> | archive <id>
  *   meminbox extract --file <transcript>
  *   meminbox reindex
@@ -35,9 +35,9 @@ Get started:
   meminbox migrate              apply schema updates after upgrading meminbox
 
 Memory commands:
-  meminbox search <query>
+  meminbox search <query> [--project <slug>]
   meminbox add --title <t> [--file <path> | --text <md>] [--active]
-  meminbox list [--status inbox|active|archived]
+  meminbox list [--status inbox|active|archived] [--project <slug>]
   meminbox promote <id> | meminbox archive <id>
   meminbox extract --file <transcript>
   meminbox reindex
@@ -49,8 +49,19 @@ function flag(name: string): string | undefined {
   const i = rest.indexOf(`--${name}`);
   return i >= 0 ? rest[i + 1] : undefined;
 }
+/** Flags that take a value; their values are not positional arguments. */
+const VALUE_FLAGS = new Set(["--title", "--file", "--text", "--status", "--project"]);
+function positionals(): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (VALUE_FLAGS.has(a)) i++;
+    else if (!a.startsWith("--")) out.push(a);
+  }
+  return out;
+}
 function positional(i: number): string | undefined {
-  return rest.filter((a) => !a.startsWith("--"))[i];
+  return positionals()[i];
 }
 
 async function main(): Promise<void> {
@@ -77,9 +88,9 @@ async function main(): Promise<void> {
 
   switch (cmd) {
     case "search": {
-      const query = rest.join(" ");
-      if (!query) throw new Error("Usage: meminbox search <query>");
-      const hits = await memory.search(query, { limit: 10 });
+      const query = positionals().join(" ");
+      if (!query) throw new Error("Usage: meminbox search <query> [--project <slug>]");
+      const hits = await memory.search(query, { limit: 10, projectSlug: flag("project") });
       for (const h of hits) {
         console.log(`\n## ${h.title}  [${h.documentId}] score=${h.score.toFixed(2)} via=${h.via.join("+")}`);
         console.log(h.snippet.replace(/\s+/g, " ").trim());
@@ -102,6 +113,7 @@ async function main(): Promise<void> {
         provenance: { source: "cli" },
       });
       console.log(`✓ Saved to ${doc.status}: ${doc.title} (${doc.id})`);
+      if (doc.indexError) console.log("  (not indexed for vector search yet — run `meminbox reindex` later)");
       break;
     }
     case "list": {
@@ -110,7 +122,7 @@ async function main(): Promise<void> {
         | "active"
         | "archived"
         | undefined;
-      const docs = await memory.listDocuments({ status, limit: 50 });
+      const docs = await memory.listDocuments({ status, limit: 50, projectSlug: flag("project") });
       if (docs.length === 0) {
         console.log(status ? `No ${status} documents yet.` : "No documents yet. Add one with: meminbox add --title <t> --text <md>");
       }

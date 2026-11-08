@@ -40,12 +40,13 @@ server.registerTool(
       query: z.string().min(1),
       limit: z.number().int().min(1).max(50).optional(),
       includeInbox: z.boolean().optional(),
+      project: z.string().optional().describe("Only search this project (slug). Omit to search all projects."),
     },
   },
-  async ({ query, limit, includeInbox }) => {
-    const active = await memory.search(query, { limit });
+  async ({ query, limit, includeInbox, project }) => {
+    const active = await memory.search(query, { limit, projectSlug: project });
     if (!includeInbox) return text(active);
-    const inbox = await memory.search(query, { limit, status: "inbox" });
+    const inbox = await memory.search(query, { limit, status: "inbox", projectSlug: project });
     return text({ active, inbox });
   },
 );
@@ -83,7 +84,12 @@ server.registerTool(
       status,
       provenance: { source: source ?? "agent-write" },
     });
-    return text({ id: doc.id, status: doc.status, title: doc.title });
+    return text({
+      id: doc.id,
+      status: doc.status,
+      title: doc.title,
+      ...(doc.indexError ? { warning: `saved, but not indexed for vector search: ${doc.indexError}` } : {}),
+    });
   },
 );
 
@@ -132,14 +138,15 @@ server.registerTool(
 server.registerTool(
   "memory_list",
   {
-    description: "List recent memory documents, optionally filtered by status.",
+    description: "List recent memory documents, optionally filtered by status and project.",
     inputSchema: {
       status: z.enum(["inbox", "active", "archived"]).optional(),
       limit: z.number().int().min(1).max(100).optional(),
+      project: z.string().optional(),
     },
   },
-  async ({ status, limit }) => {
-    const docs = await memory.listDocuments({ status, limit });
+  async ({ status, limit, project }) => {
+    const docs = await memory.listDocuments({ status, limit, projectSlug: project });
     return text(
       docs.map((d) => ({
         id: d.id,

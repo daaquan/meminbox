@@ -152,7 +152,7 @@ npm run cli -- list
 
 | Tool | What it does |
 |---|---|
-| `memory_search` | Hybrid search over **active** memory (`includeInbox` to also search the inbox) |
+| `memory_search` | Hybrid search over **active** memory (`includeInbox` to also search the inbox, `project` to limit to one project) |
 | `memory_read` | Read a document in full |
 | `memory_write` | Write a document — **inbox by default** |
 | `memory_extract` | Extract durable candidates from raw text into the inbox |
@@ -175,8 +175,6 @@ npm run cli -- list
 
 ## Known limitations / roadmap
 
-- Search RPCs don't filter by project yet (single-project use is the v0
-  assumption); project filtering is the next migration.
 - `embedBatch` is sequential; reindex of large libraries will want batching.
 - No web UI yet: the human window is the CLI + Supabase Table Editor.
   A small read/review UI for the inbox is the natural next step.
