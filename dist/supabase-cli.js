@@ -15,6 +15,8 @@ function runSupabase(args, timeoutMs = 60_000) {
         });
     });
 }
+/** stderr of a CLI that does not know a flag (older/newer CLI versions). */
+const UNKNOWN_FLAG = /unknown flag|unknown shorthand|invalid argument/i;
 async function runSupabaseJson(args) {
     // v3 uses --output-format json; v2 used -o json. Try v3 first and fall
     // back if the flag itself is rejected.
@@ -28,7 +30,7 @@ async function runSupabaseJson(args) {
                 throw new Error(`supabase CLI returned non-JSON output for: supabase ${args.join(" ")}`);
             }
         }
-        if (!/unknown flag|unknown shorthand|invalid argument/i.test(r.stderr)) {
+        if (!UNKNOWN_FLAG.test(r.stderr)) {
             throw new Error(r.stderr.trim() || `supabase ${args.join(" ")} failed`);
         }
     }
@@ -142,7 +144,12 @@ export async function detectSupabaseCli() {
     const version = await runSupabase(["--version"], 15_000);
     if (version.code !== 0)
         return { status: "not-installed" };
-    const list = await runSupabase(["projects", "list", "--output-format", "json"], 30_000);
+    // Same v3/v2 output-flag fallback as runSupabaseJson; detection needs the
+    // raw result so a real failure (e.g. not logged in) stays distinguishable.
+    let list = await runSupabase(["projects", "list", "--output-format", "json"], 30_000);
+    if (list.code !== 0 && UNKNOWN_FLAG.test(list.stderr)) {
+        list = await runSupabase(["projects", "list", "-o", "json"], 30_000);
+    }
     return interpretProjectsListResult(list.code, list.stdout, list.stderr);
 }
 /** Fetch the project's privileged (service) key via the CLI. */

@@ -41,3 +41,10 @@ describe("upsertCodexToml", () => {
     assert.ok(twice.includes('model = "gpt-5"'));
   });
 });
+
+describe("codex actor escaping", () => {
+  it("keeps the TOML valid when the actor contains quotes or backslashes", () => {
+    const out = upsertCodexToml("", 'my "laptop" \\ 2');
+    assert.ok(out.includes('MEMINBOX_ACTOR = "my \\"laptop\\" \\\\ 2"'), out);
+  });
+});

@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, } from "node:fs";
 import { homedir, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 export const AGENT_TOOLS = [
     "claude-code",
     "codex",
@@ -25,7 +26,8 @@ export function codexTomlBlock(actor) {
         "args = []",
         "",
         "[mcp_servers.meminbox.env]",
-        `MEMINBOX_ACTOR = "${actor}"`,
+        // JSON string escaping is valid TOML basic-string escaping
+        `MEMINBOX_ACTOR = ${JSON.stringify(actor)}`,
         "",
     ].join("\n");
 }
@@ -69,7 +71,7 @@ export function agentConfigPath(tool) {
 }
 function onPath(bin) {
     const exts = platform() === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-    for (const dir of (process.env.PATH ?? "").split(":")) {
+    for (const dir of (process.env.PATH ?? "").split(delimiter)) {
         for (const ext of exts) {
             if (dir && existsSync(join(dir, bin + ext)))
                 return true;
@@ -86,6 +88,30 @@ export function runConfigureAgent(argv) {
     const printOnly = argv.includes("--print");
     const actorIdx = argv.indexOf("--actor");
     const actor = actorIdx >= 0 ? argv[actorIdx + 1] : tool;
+    if (!actor || actor.startsWith("--")) {
+        throw new Error("usage: --actor <name> needs a value, e.g. --actor claude-code-laptop");
+    }
+    // Claude Code rewrites ~/.claude.json while it runs, so editing that file
+    // directly can be silently undone. Its own CLI is the safe writer.
+    if (tool === "claude-code" && onPath("claude")) {
+        const json = JSON.stringify({ type: "stdio", ...mcpServerEntry(actor) });
+        const addArgs = ["mcp", "add-json", "--scope", "user", "meminbox", json];
+        if (printOnly) {
+            console.log(`claude mcp remove --scope user meminbox\nclaude ${addArgs.slice(0, -1).join(" ")} '${json}'`);
+            return;
+        }
+        try {
+            execFileSync("claude", ["mcp", "remove", "--scope", "user", "meminbox"], { stdio: "ignore" });
+        }
+        catch {
+            // not registered yet
+        }
+        execFileSync("claude", addArgs, { stdio: ["ignore", "ignore", "inherit"] });
+        console.log("configured claude-code: meminbox MCP server registered with `claude mcp add-json --scope user`");
+        warnIfMcpBinaryMissing();
+        console.log("restart Claude Code to pick up the new MCP server.");
+        return;
+    }
     const path = agentConfigPath(tool);
     const existing = existsSync(path) ? readFileSync(path, "utf8") : null;
     const next = tool === "codex"
@@ -103,10 +129,13 @@ export function runConfigureAgent(argv) {
     console.log(`configured ${tool}: meminbox MCP server written to ${path}`);
     if (existing !== null)
         console.log(`previous config backed up to ${path}.bak`);
+    warnIfMcpBinaryMissing();
+    console.log("restart the agent client to pick up the new MCP server.");
+}
+function warnIfMcpBinaryMissing() {
     if (!onPath("meminbox-mcp")) {
         console.log("note: `meminbox-mcp` is not on your PATH yet. Install meminbox globally first:\n" +
             "  npm install -g github:daaquan/meminbox");
     }
-    console.log("restart the agent client to pick up the new MCP server.");
 }
 //# sourceMappingURL=agents.js.map

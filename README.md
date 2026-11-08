@@ -110,8 +110,11 @@ meminbox init --yes \
 meminbox configure-agent --tool claude-code   # or: codex | cursor | claude-desktop
 ```
 
-This writes the MCP server entry into the client's own config file
-(backing up the previous one to `<file>.bak`). The entry contains **no
+For Claude Code this registers the server with `claude mcp add-json
+--scope user` (Claude Code rewrites `~/.claude.json` while running, so the
+file is not edited directly). For the other clients it writes the MCP
+server entry into the client's own config file (backing up the previous
+one to `<file>.bak`). The entry contains **no
 secrets** — the server reads `~/.meminbox/.env` itself. Each client gets
 its own `MEMINBOX_ACTOR`, so provenance shows which agent wrote what.
 Use `--print` to preview the entry without writing anything.
