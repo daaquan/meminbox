@@ -68,8 +68,8 @@ Free tier is enough. You'll need:
 ### 2. Install
 
 ```bash
-npm install -g github:daaquan/meminbox
-# (once published to npm, this becomes: npm install -g meminbox)
+npm install -g meminbox
+# from source instead: npm install -g github:daaquan/meminbox
 ```
 
 ### 3. Initialise
