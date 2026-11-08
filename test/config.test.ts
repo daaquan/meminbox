@@ -63,3 +63,19 @@ describe("writePrivateFile", () => {
     assert.equal(statSync(dir).mode & 0o777, 0o700);
   });
 });
+
+describe("allowAgentPromote", () => {
+  const base = { MEMINBOX_SUPABASE_URL: "https://m.supabase.co", MEMINBOX_SUPABASE_SERVICE_ROLE_KEY: "k" };
+  it("is off unless MEMINBOX_ALLOW_AGENT_PROMOTE is set", () => {
+    assert.equal(loadConfig(base, none).allowAgentPromote, false);
+    assert.equal(loadConfig({ ...base, MEMINBOX_ALLOW_AGENT_PROMOTE: "1" }, none).allowAgentPromote, true);
+    assert.equal(loadConfig({ ...base, MEMINBOX_ALLOW_AGENT_PROMOTE: "0" }, none).allowAgentPromote, false);
+  });
+
+  it("cannot be enabled by the current directory's .env", () => {
+    const files = { home: {}, local: { MEMINBOX_ALLOW_AGENT_PROMOTE: "1" } };
+    assert.equal(loadConfig(base, files).allowAgentPromote, false);
+    const home = { home: { MEMINBOX_ALLOW_AGENT_PROMOTE: "1" }, local: {} };
+    assert.equal(loadConfig(base, home).allowAgentPromote, true);
+  });
+});

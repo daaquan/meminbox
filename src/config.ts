@@ -8,6 +8,8 @@ export interface Config {
   extractModel: string;
   defaultProject: string;
   actor: string;
+  /** Let MCP agents promote/archive and write active memory (default: humans only). */
+  allowAgentPromote: boolean;
 }
 
 /**
@@ -77,5 +79,10 @@ export function loadConfig(
     extractModel: get("EXTRACT_MODEL") ?? "gpt-4o-mini",
     defaultProject: get("DEFAULT_PROJECT") ?? "default",
     actor: get("ACTOR") ?? "cli",
+    // Never from ./.env: a cloned repo must not be able to switch off the
+    // human review gate for the agent working inside it.
+    allowAgentPromote: /^(1|true|yes)$/i.test(
+      resolveSetting("ALLOW_AGENT_PROMOTE", env, { home: files.home, local: {} }) ?? "",
+    ),
   };
 }

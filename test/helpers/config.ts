@@ -8,4 +8,5 @@ export const cfg: Config = {
   extractModel: "gpt-4o-mini",
   defaultProject: "default",
   actor: "test",
+  allowAgentPromote: false,
 };

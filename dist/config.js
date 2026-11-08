@@ -54,6 +54,9 @@ export function loadConfig(env = process.env, files = readConfigFiles()) {
         extractModel: get("EXTRACT_MODEL") ?? "gpt-4o-mini",
         defaultProject: get("DEFAULT_PROJECT") ?? "default",
         actor: get("ACTOR") ?? "cli",
+        // Never from ./.env: a cloned repo must not be able to switch off the
+        // human review gate for the agent working inside it.
+        allowAgentPromote: /^(1|true|yes)$/i.test(resolveSetting("ALLOW_AGENT_PROMOTE", env, { home: files.home, local: {} }) ?? ""),
     };
 }
 //# sourceMappingURL=config.js.map

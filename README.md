@@ -166,11 +166,18 @@ npm run cli -- list
 |---|---|
 | `memory_search` | Hybrid search over **active** memory (`includeInbox` to also search the inbox, `project` to limit to one project) |
 | `memory_read` | Read a document in full |
-| `memory_write` | Write a document — **inbox by default** |
+| `memory_write` | Write a document — **always to the inbox** (see below) |
 | `memory_extract` | Extract durable candidates from raw text into the inbox |
-| `memory_promote` | Promote inbox → active, or archive |
+| `memory_promote` | Promote inbox → active, or archive — only offered with `MEMINBOX_ALLOW_AGENT_PROMOTE=1` |
 | `memory_list` | List documents by status |
 | `memory_projects` | List projects (namespaces) |
+
+Promotion is a **human** action by default: agents can write to the inbox
+but cannot promote, archive or write active memory, so one agent's
+mistake cannot turn itself into every agent's fact. Review with
+`meminbox list --status inbox` and `meminbox promote <id>`. To let agents
+promote too, set `MEMINBOX_ALLOW_AGENT_PROMOTE=1` in the environment or
+`~/.meminbox/.env` (a project's `./.env` cannot turn it on).
 
 ## Security notes (read before connecting anything)
 
