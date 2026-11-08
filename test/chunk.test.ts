@@ -32,3 +32,19 @@ describe("chunkMarkdown", () => {
     assert.ok(chunks[0]!.includes("## Section"));
   });
 });
+
+describe("chunkMarkdown edge cases", () => {
+  it("rejects an overlap that could never advance", () => {
+    assert.throws(() => chunkMarkdown("x".repeat(50), { maxChars: 10, overlap: 10 }), /overlap/);
+    assert.throws(() => chunkMarkdown("x".repeat(50), { maxChars: 10, overlap: 20 }), /overlap/);
+  });
+
+  it("never splits a surrogate pair", () => {
+    const md = "😀".repeat(40); // 80 UTF-16 code units, no break points
+    const chunks = chunkMarkdown(md, { maxChars: 15, overlap: 3 });
+    assert.ok(chunks.length > 1);
+    for (const c of chunks) {
+      assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(c), `lone surrogate in ${JSON.stringify(c)}`);
+    }
+  });
+});

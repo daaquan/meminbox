@@ -44,10 +44,35 @@ export async function extractCandidates(cfg, rawText, opts = {}) {
         throw new Error(`Extraction request failed: ${res.status} ${await res.text()}`);
     }
     const json = (await res.json());
-    const parsed = JSON.parse(json.choices[0]?.message.content ?? "{}");
-    return (parsed.items ?? []).map((i) => ({
-        title: i.title,
-        contentMd: i.content,
-    }));
+    return parseExtraction(json.choices[0]?.message.content ?? "{}");
+}
+/**
+ * Validate the model's JSON BEFORE anything is written: a malformed item
+ * used to fail the database insert halfway through, after earlier
+ * candidates had already been filed. Items without a usable title and
+ * content are dropped (and counted on stderr), never half-written.
+ */
+export function parseExtraction(content) {
+    let parsed;
+    try {
+        parsed = JSON.parse(content);
+    }
+    catch {
+        throw new Error("Extraction failed: the model did not return valid JSON. Nothing was filed.");
+    }
+    const items = parsed?.items;
+    if (!Array.isArray(items))
+        return [];
+    const out = [];
+    for (const item of items) {
+        const { title, content: body } = (item ?? {});
+        if (typeof title === "string" && title.trim() && typeof body === "string" && body.trim()) {
+            out.push({ title: title.trim(), contentMd: body.trim() });
+        }
+    }
+    if (out.length < items.length) {
+        console.error(`meminbox: skipped ${items.length - out.length} malformed extraction item(s)`);
+    }
+    return out;
 }
 //# sourceMappingURL=extract.js.map

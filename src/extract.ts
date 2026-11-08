@@ -59,11 +59,33 @@ export async function extractCandidates(
   const json = (await res.json()) as {
     choices: Array<{ message: { content: string } }>;
   };
-  const parsed = JSON.parse(json.choices[0]?.message.content ?? "{}") as {
-    items?: Array<{ title: string; content: string }>;
-  };
-  return (parsed.items ?? []).map((i) => ({
-    title: i.title,
-    contentMd: i.content,
-  }));
+  return parseExtraction(json.choices[0]?.message.content ?? "{}");
+}
+
+/**
+ * Validate the model's JSON BEFORE anything is written: a malformed item
+ * used to fail the database insert halfway through, after earlier
+ * candidates had already been filed. Items without a usable title and
+ * content are dropped (and counted on stderr), never half-written.
+ */
+export function parseExtraction(content: string): ExtractedCandidate[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("Extraction failed: the model did not return valid JSON. Nothing was filed.");
+  }
+  const items = (parsed as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return [];
+  const out: ExtractedCandidate[] = [];
+  for (const item of items) {
+    const { title, content: body } = (item ?? {}) as { title?: unknown; content?: unknown };
+    if (typeof title === "string" && title.trim() && typeof body === "string" && body.trim()) {
+      out.push({ title: title.trim(), contentMd: body.trim() });
+    }
+  }
+  if (out.length < items.length) {
+    console.error(`meminbox: skipped ${items.length - out.length} malformed extraction item(s)`);
+  }
+  return out;
 }
