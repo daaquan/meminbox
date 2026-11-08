@@ -1,5 +1,10 @@
 node_modules/
-dist/
+# dist/ is committed on purpose: it lets `npm install -g github:daaquan/meminbox`
+# work without a build step (npm's git-dependency `prepare` runs before the
+# devDependency binaries are usable, so building at install time is unreliable).
+# Only the runtime .js files are tracked; maps and type declarations are not.
+dist/**/*.js.map
+dist/**/*.d.ts
 .env
 .env.*
 !.env.example

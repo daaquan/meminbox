@@ -115,7 +115,8 @@ meminbox search "deploy"
 ### Development (from a clone)
 
 ```bash
-npm install        # also builds dist/ via the prepare script
+npm install        # then: npm run build to refresh dist/ (dist/ is committed
+                   # so git-based installs work without building)
 npm test
 npm run cli -- list
 ```

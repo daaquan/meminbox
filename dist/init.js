@@ -1,0 +1,155 @@
+import { createInterface } from "node:readline/promises";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
+import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
+function parseFlags(argv) {
+    const get = (name) => {
+        const i = argv.indexOf(`--${name}`);
+        return i >= 0 ? argv[i + 1] : undefined;
+    };
+    return {
+        url: get("url") ?? process.env.SUPABASE_URL,
+        serviceKey: get("service-key") ?? process.env.SUPABASE_SERVICE_ROLE_KEY,
+        databaseUrl: get("database-url") ?? process.env.DATABASE_URL,
+        openaiKey: get("openai-key") ?? process.env.OPENAI_API_KEY,
+        actor: get("actor"),
+        project: get("project"),
+        noMigrate: argv.includes("--no-migrate"),
+        force: argv.includes("--force"),
+        yes: argv.includes("--yes"),
+    };
+}
+async function promptSecret(query) {
+    if (!process.stdin.isTTY) {
+        const rl = createInterface({ input: process.stdin, output: process.stderr });
+        const answer = await rl.question(query);
+        rl.close();
+        return answer.trim();
+    }
+    process.stderr.write(query);
+    return new Promise((resolve) => {
+        const stdin = process.stdin;
+        stdin.setRawMode(true);
+        stdin.resume();
+        let value = "";
+        const onData = (buf) => {
+            const ch = buf.toString("utf8");
+            if (ch === "\n" || ch === "\r" || ch === "\u0004") {
+                stdin.setRawMode(false);
+                stdin.pause();
+                stdin.removeListener("data", onData);
+                process.stderr.write("\n");
+                resolve(value.trim());
+            }
+            else if (ch === "\u0003") {
+                process.exit(130);
+            }
+            else if (ch === "\u007f") {
+                value = value.slice(0, -1);
+            }
+            else {
+                value += ch;
+            }
+        };
+        stdin.on("data", onData);
+    });
+}
+function migrationDir() {
+    // Works from both src/ (tsx) and dist/ (built): both sit one level
+    // below the package root, next to supabase/migrations.
+    return fileURLToPath(new URL("../supabase/migrations/", import.meta.url));
+}
+export function listMigrationSql() {
+    const dir = migrationDir();
+    return readdirSync(dir)
+        .filter((f) => f.endsWith(".sql"))
+        .sort()
+        .map((name) => ({ name, sql: readFileSync(`${dir}${name}`, "utf8") }));
+}
+async function applyMigrations(databaseUrl) {
+    const client = new pg.Client({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+        for (const m of listMigrationSql()) {
+            await client.query(m.sql);
+            console.log(`applied migration ${m.name}`);
+        }
+    }
+    finally {
+        await client.end();
+    }
+}
+export async function runInit(argv) {
+    const opts = parseFlags(argv);
+    const envPath = meminboxEnvPath();
+    if (existsSync(envPath) && !opts.force) {
+        if (opts.yes) {
+            throw new Error(`${envPath} already exists. Re-run with --force to overwrite.`);
+        }
+        const rl = createInterface({ input: process.stdin, output: process.stderr });
+        const answer = await rl.question(`${envPath} already exists. Overwrite? [y/N] `);
+        rl.close();
+        if (!/^y(es)?$/i.test(answer.trim())) {
+            console.log("aborted — existing config kept");
+            return;
+        }
+    }
+    let { url, serviceKey, databaseUrl, openaiKey } = opts;
+    if (!opts.yes) {
+        const rl = createInterface({ input: process.stdin, output: process.stderr });
+        if (!url)
+            url = (await rl.question("Supabase project URL (https://….supabase.co): ")).trim();
+        rl.close();
+        if (!serviceKey)
+            serviceKey = await promptSecret("Supabase service role key (input hidden): ");
+        if (!databaseUrl && !opts.noMigrate) {
+            databaseUrl = await promptSecret("Postgres connection string for migrations (optional, Enter to skip — you can paste the SQL in the SQL Editor instead): ");
+            if (!databaseUrl)
+                databaseUrl = undefined;
+        }
+        if (!openaiKey) {
+            const rl2 = createInterface({ input: process.stdin, output: process.stderr });
+            openaiKey = (await rl2.question("OpenAI API key for embeddings (optional, Enter to skip): ")).trim() || undefined;
+            rl2.close();
+        }
+    }
+    if (!url || !serviceKey) {
+        throw new Error("SUPABASE_URL and the service role key are required. Pass --url / --service-key or run interactively.");
+    }
+    if (!/^https:\/\//.test(url))
+        throw new Error("Supabase URL must start with https://");
+    if (databaseUrl && !opts.noMigrate) {
+        await applyMigrations(databaseUrl);
+    }
+    else {
+        console.log("\nSchema not applied automatically. Paste the migration SQL into your Supabase SQL Editor:\n" +
+            listMigrationSql().map((m) => `  - supabase/migrations/${m.name} (in the meminbox package)`).join("\n") +
+            "\n");
+    }
+    mkdirSync(meminboxHome(), { recursive: true, mode: 0o700 });
+    const values = {
+        SUPABASE_URL: url,
+        SUPABASE_SERVICE_ROLE_KEY: serviceKey,
+        MEMORY_ACTOR: opts.actor ?? "cli",
+        MEMORY_DEFAULT_PROJECT: opts.project ?? "default",
+    };
+    if (openaiKey)
+        values.OPENAI_API_KEY = openaiKey;
+    writeFileSync(envPath, formatDotEnv(values), { mode: 0o600 });
+    console.log(`wrote ${envPath} (mode 0600; database URL was not saved)`);
+    // Smoke test: proves credentials AND schema in one round trip.
+    const db = createClient(url, serviceKey, { auth: { persistSession: false } });
+    const { error } = await db.from("projects").select("slug").limit(1);
+    if (error) {
+        console.log(`\nConnected to Supabase, but the meminbox schema is not reachable (${error.message}).\n` +
+            "If you skipped migrations, apply the SQL first, then verify with: meminbox list");
+        return;
+    }
+    console.log("\nSetup complete. Next steps:");
+    console.log("  meminbox configure-agent --tool claude-code   # or codex / cursor / claude-desktop");
+    console.log("  meminbox add --title 'First memory' --text '…' --active");
+    console.log("  meminbox search 'First memory'");
+}
+//# sourceMappingURL=init.js.map
