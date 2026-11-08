@@ -11,6 +11,7 @@ import { MemoryService } from "./memory.js";
  *
  * Setup:
  *   meminbox init [--url <url> --service-key <key> --database-url <url>]
+ *                 (auto-detects `supabase login` when the Supabase CLI is present)
  *   meminbox configure-agent --tool <claude-code|codex|cursor|claude-desktop> [--print]
  *
  * Memory:

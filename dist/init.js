@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
+import { applySqlFileViaCli, detectSupabaseCli, getServiceKeyViaCli, supabaseUrlForRef, } from "./supabase-cli.js";
 function parseFlags(argv) {
     const get = (name) => {
         const i = argv.indexOf(`--${name}`);
@@ -16,6 +17,8 @@ function parseFlags(argv) {
         openaiKey: get("openai-key") ?? process.env.OPENAI_API_KEY,
         actor: get("actor"),
         project: get("project"),
+        projectRef: get("project-ref"),
+        noCli: argv.includes("--no-cli"),
         noMigrate: argv.includes("--no-migrate"),
         force: argv.includes("--force"),
         yes: argv.includes("--yes"),
@@ -68,6 +71,13 @@ export function listMigrationSql() {
         .sort()
         .map((name) => ({ name, sql: readFileSync(`${dir}${name}`, "utf8") }));
 }
+export function listMigrationFiles() {
+    const dir = migrationDir();
+    return readdirSync(dir)
+        .filter((f) => f.endsWith(".sql"))
+        .sort()
+        .map((name) => ({ name, path: `${dir}${name}` }));
+}
 async function applyMigrations(databaseUrl) {
     const client = new pg.Client({ connectionString: databaseUrl });
     await client.connect();
@@ -97,6 +107,53 @@ export async function runInit(argv) {
         }
     }
     let { url, serviceKey, databaseUrl, openaiKey } = opts;
+    let cliSchemaApplied = false;
+    // Preferred path: if the official Supabase CLI is installed and logged
+    // in, take everything from it. The CLI's access token never leaves the
+    // CLI — we only consume its command output.
+    if (!url && !serviceKey && !opts.noCli) {
+        const det = await detectSupabaseCli();
+        if (det.status === "ready" && det.projects.length > 0) {
+            let project;
+            if (opts.projectRef) {
+                project = det.projects.find((p) => p.ref === opts.projectRef);
+                if (!project) {
+                    throw new Error(`project ${opts.projectRef} was not returned by \`supabase projects list\``);
+                }
+            }
+            else if (det.projects.length === 1) {
+                project = det.projects[0];
+            }
+            else if (!opts.yes) {
+                console.log("Supabase CLI detected. Your projects:");
+                det.projects.forEach((p, i) => console.log(`  ${i + 1}. ${p.name} (${p.ref})`));
+                const rl = createInterface({ input: process.stdin, output: process.stderr });
+                const answer = await rl.question(`Select project [1-${det.projects.length}]: `);
+                rl.close();
+                project = det.projects[Number(answer.trim()) - 1];
+                if (!project)
+                    throw new Error("invalid project selection");
+            }
+            else {
+                throw new Error("multiple Supabase projects found via CLI; pass --project-ref <ref>");
+            }
+            console.log(`using Supabase CLI login — project ${project.name} (${project.ref})`);
+            serviceKey = await getServiceKeyViaCli(project.ref);
+            url = supabaseUrlForRef(project.ref);
+            if (!opts.noMigrate) {
+                for (const f of listMigrationFiles()) {
+                    await applySqlFileViaCli(project.ref, f.path);
+                    console.log(`applied migration ${f.name} via Supabase CLI`);
+                }
+                cliSchemaApplied = true;
+            }
+        }
+        else if (!opts.yes) {
+            console.log(det.status === "not-installed"
+                ? "Supabase CLI not found — continuing with manual setup. (Tip: install it and run `supabase login` for the one-step flow.)"
+                : "Supabase CLI is not logged in — run `supabase login` for the one-step flow, or continue manually.");
+        }
+    }
     if (!opts.yes) {
         const rl = createInterface({ input: process.stdin, output: process.stderr });
         if (!url)
@@ -104,7 +161,7 @@ export async function runInit(argv) {
         rl.close();
         if (!serviceKey)
             serviceKey = await promptSecret("Supabase service role key (input hidden): ");
-        if (!databaseUrl && !opts.noMigrate) {
+        if (!databaseUrl && !opts.noMigrate && !cliSchemaApplied) {
             databaseUrl = await promptSecret("Postgres connection string for migrations (optional, Enter to skip — you can paste the SQL in the SQL Editor instead): ");
             if (!databaseUrl)
                 databaseUrl = undefined;
@@ -120,7 +177,10 @@ export async function runInit(argv) {
     }
     if (!/^https:\/\//.test(url))
         throw new Error("Supabase URL must start with https://");
-    if (databaseUrl && !opts.noMigrate) {
+    if (cliSchemaApplied) {
+        // Schema already applied through the Supabase CLI above.
+    }
+    else if (databaseUrl && !opts.noMigrate) {
         await applyMigrations(databaseUrl);
     }
     else {

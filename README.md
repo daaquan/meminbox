@@ -83,6 +83,16 @@ connection string is provided (otherwise it tells you which SQL file to
 paste into the Supabase SQL Editor), saves your configuration to
 `~/.meminbox/.env` (mode `0600`), and smoke-tests the connection.
 
+**Fastest path — Supabase CLI:** if the official
+[Supabase CLI](https://supabase.com/docs/guides/local-development/cli/getting-started)
+is installed and you have run `supabase login`, `meminbox init` detects
+it and does everything through the CLI: it lists your projects, fetches
+the chosen project's service key, and applies the schema — no dashboard
+copy-paste. Your CLI access token never leaves the CLI; meminbox only
+consumes its command output and stores the project's own key. With
+several projects, pass `--project-ref <ref>` (or `--no-cli` to force the
+manual flow).
+
 Non-interactive form:
 
 ```bash

@@ -10,3 +10,6 @@ dist/**/*.d.ts
 !.env.example
 *.log
 .DS_Store
+
+# Supabase CLI local state
+supabase/.temp/
