@@ -45,7 +45,11 @@ export function parseProjectsList(data) {
             "";
         if (!ref)
             continue;
-        out.push({ ref, name: typeof item.name === "string" ? item.name : ref });
+        out.push({
+            ref,
+            name: typeof item.name === "string" ? item.name : ref,
+            linked: item.linked === true,
+        });
     }
     return out;
 }

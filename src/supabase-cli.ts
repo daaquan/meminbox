@@ -20,6 +20,8 @@ import { execFile } from "node:child_process";
 export interface CliProject {
   ref: string;
   name: string;
+  /** True when the Supabase CLI marks this as the project linked in cwd. */
+  linked: boolean;
 }
 
 export interface ApiKeyEntry {
@@ -86,7 +88,11 @@ export function parseProjectsList(data: unknown): CliProject[] {
       (typeof item.ref === "string" && item.ref) ||
       "";
     if (!ref) continue;
-    out.push({ ref, name: typeof item.name === "string" ? item.name : ref });
+    out.push({
+      ref,
+      name: typeof item.name === "string" ? item.name : ref,
+      linked: item.linked === true,
+    });
   }
   return out;
 }

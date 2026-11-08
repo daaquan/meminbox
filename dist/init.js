@@ -121,11 +121,16 @@ export async function runInit(argv) {
         const det = await detectSupabaseCli();
         if (det.status === "ready" && det.projects.length > 0) {
             let project;
+            const linkedProject = det.projects.find((p) => p.linked);
             if (opts.projectRef) {
                 project = det.projects.find((p) => p.ref === opts.projectRef);
                 if (!project) {
                     throw new Error(`project ${opts.projectRef} was not returned by \`supabase projects list\``);
                 }
+            }
+            else if (linkedProject) {
+                // `supabase link` already answered "which project?" — don't ask again.
+                project = linkedProject;
             }
             else if (det.projects.length === 1) {
                 project = det.projects[0];

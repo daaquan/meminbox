@@ -14,7 +14,7 @@ describe("parseProjectsList", () => {
       { id: "abcdefghijklmnopqrst", name: "other", region: "us-east-1", status: "ACTIVE_HEALTHY" },
     ]);
     assert.equal(projects.length, 2);
-    assert.deepEqual(projects[0], { ref: "barlktqxhecnoadyjvat", name: "meminbox" });
+    assert.deepEqual(projects[0], { ref: "barlktqxhecnoadyjvat", name: "meminbox", linked: false });
   });
 
   it("accepts ref-style entries and skips entries without an id", () => {
@@ -23,7 +23,15 @@ describe("parseProjectsList", () => {
       { name: "no-id" },
       "junk",
     ]);
-    assert.deepEqual(projects, [{ ref: "xyzref", name: "p" }]);
+    assert.deepEqual(projects, [{ ref: "xyzref", name: "p", linked: false }]);
+  });
+
+  it("keeps the linked flag so init can reuse `supabase link`", () => {
+    const projects = parseProjectsList([
+      { id: "abcdefghijklmnopqrst", name: "other" },
+      { id: "barlktqxhecnoadyjvat", name: "linked one", linked: true },
+    ]);
+    assert.equal(projects.find((p) => p.linked)?.ref, "barlktqxhecnoadyjvat");
   });
 
   it("returns [] for non-arrays", () => {
