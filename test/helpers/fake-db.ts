@@ -21,7 +21,7 @@ export function fakeDb(respond: Responder = () => ({ data: null })) {
   const builder = (table: string) => {
     const ops: Call[] = [];
     const b: Record<string, unknown> = {};
-    for (const op of ["select", "insert", "upsert", "update", "delete", "eq", "order", "limit", "range", "single", "maybeSingle"]) {
+    for (const op of ["select", "insert", "upsert", "update", "delete", "eq", "neq", "order", "limit", "range", "single", "maybeSingle"]) {
       b[op] = (...args: unknown[]) => {
         const c = { table, op, args };
         ops.push(c);

@@ -21,6 +21,10 @@ export interface MemoryDocument {
   source_agent: string | null;
   provenance: Provenance;
   version: number;
+  /** sha256 of the normalised content; null only on rows not yet backfilled. */
+  content_hash: string | null;
+  /** Identity of the imported source this document mirrors, if any. */
+  source_key: string | null;
   created_at: string;
   updated_at: string;
 }

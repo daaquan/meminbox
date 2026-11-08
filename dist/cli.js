@@ -5,6 +5,7 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { friendlyError, isDebug, SetupCancelled } from "./errors.js";
 import { extractCandidates } from "./extract.js";
+import { BUILTIN_SOURCES, collectDir, collectSources } from "./importers.js";
 import { runInit, runMigrate } from "./init.js";
 import { MemoryService } from "./memory.js";
 /**
@@ -22,6 +23,8 @@ import { MemoryService } from "./memory.js";
  *   meminbox list [--status inbox|active|archived] [--project <slug>]
  *   meminbox promote <id> | archive <id>
  *   meminbox extract --file <transcript>
+  meminbox import [--from claude-code,codex,gemini] [--project <slug>] [--active] [--dry-run]
+  meminbox import --dir <path> [--agent <name>]   any folder of Markdown (Cursor rules, notes, ...)
  *   meminbox reindex
  *   meminbox projects
  */
@@ -38,6 +41,8 @@ Memory commands:
   meminbox list [--status inbox|active|archived] [--project <slug>]
   meminbox promote <id> | meminbox archive <id>
   meminbox extract --file <transcript>
+  meminbox import [--from claude-code,codex,gemini] [--project <slug>] [--active] [--dry-run]
+  meminbox import --dir <path> [--agent <name>]   any folder of Markdown (Cursor rules, notes, ...)
   meminbox reindex
   meminbox projects`;
 const [cmd, ...rest] = process.argv.slice(2);
@@ -46,7 +51,7 @@ function flag(name) {
     return i >= 0 ? rest[i + 1] : undefined;
 }
 /** Flags that take a value; their values are not positional arguments. */
-const VALUE_FLAGS = new Set(["--title", "--file", "--text", "--status", "--project"]);
+const VALUE_FLAGS = new Set(["--title", "--file", "--text", "--status", "--project", "--from", "--dir", "--agent"]);
 function positionals() {
     const out = [];
     for (let i = 0; i < rest.length; i++) {
@@ -60,6 +65,75 @@ function positionals() {
 }
 function positional(i) {
     return positionals()[i];
+}
+function describeWrite(doc) {
+    switch (doc.outcome) {
+        case "duplicate":
+            return `= Already stored (identical content, ${doc.status}): ${doc.title} (${doc.id}) — nothing new written`;
+        case "updated":
+            return `✓ Updated (${doc.status}, v${doc.version}): ${doc.title} (${doc.id})`;
+        case "unchanged":
+            return `= Unchanged: ${doc.title} (${doc.id})`;
+        case "archived":
+            return `- Archived earlier, left alone: ${doc.title} (${doc.id})`;
+        default:
+            return `✓ Saved to ${doc.status}: ${doc.title} (${doc.id})`;
+    }
+}
+const IMPORT_MARK = {
+    created: "+",
+    updated: "~",
+    unchanged: "=",
+    duplicate: "=",
+    archived: "-",
+};
+async function runImport(memory) {
+    const dir = flag("dir");
+    const from = flag("from");
+    const dryRun = rest.includes("--dry-run");
+    const opts = { allowSecrets: rest.includes("--allow-secrets") };
+    const projectOverride = flag("project");
+    const parts = [];
+    if (dir)
+        parts.push(collectDir(dir, flag("agent") ?? "import", opts));
+    if (from || !dir) {
+        const names = from ? from.split(",").map((s) => s.trim()).filter(Boolean) : [...BUILTIN_SOURCES];
+        parts.push(collectSources(names, opts));
+    }
+    const items = parts.flatMap((p) => p.items);
+    const skipped = parts.flatMap((p) => p.skipped);
+    for (const n of parts.flatMap((p) => p.notes))
+        console.log(`  ${n}`);
+    for (const s of skipped)
+        console.log(`! skipped ${s.path}: ${s.reason}`);
+    const counts = { created: 0, updated: 0, unchanged: 0, duplicate: 0, archived: 0 };
+    for (const item of items) {
+        const project = projectOverride ?? item.projectSlug ?? "(default)";
+        if (dryRun) {
+            console.log(`  would import [${project}] ${item.title}  ← ${item.path}`);
+            continue;
+        }
+        const doc = await memory.writeDocument({
+            title: item.title,
+            contentMd: item.contentMd,
+            projectSlug: projectOverride ?? item.projectSlug,
+            status: rest.includes("--active") ? "active" : undefined,
+            sourceKey: item.sourceKey,
+            provenance: { agent: item.agent, source: "import", uri: item.path },
+        });
+        counts[doc.outcome]++;
+        const note = doc.outcome === "duplicate" ? "  (identical content already stored)" : doc.outcome === "archived" ? "  (archived earlier, left alone)" : "";
+        console.log(`${IMPORT_MARK[doc.outcome]} [${project}] ${doc.title} (${doc.id})${note}`);
+    }
+    if (dryRun) {
+        console.log(`\nDry run: ${items.length} to import, ${skipped.length} skipped. Nothing was written.`);
+        return;
+    }
+    console.log(`\n✓ Import done: ${counts.created} new, ${counts.updated} updated, ${counts.unchanged + counts.duplicate} already stored, ` +
+        `${counts.archived} archived (left alone), ${skipped.length} skipped.`);
+    if (counts.created + counts.updated > 0 && !rest.includes("--active")) {
+        console.log("  New and changed documents are in the inbox: review with `meminbox list --status inbox`, then `meminbox promote <id>`.");
+    }
 }
 async function main() {
     // Setup commands run BEFORE any config exists — they must not load it.
@@ -111,7 +185,7 @@ async function main() {
                 status: rest.includes("--active") ? "active" : "inbox",
                 provenance: { source: "cli" },
             });
-            console.log(`✓ Saved to ${doc.status}: ${doc.title} (${doc.id})`);
+            console.log(describeWrite(doc));
             if (doc.indexError)
                 console.log("  (not indexed for vector search yet — run `meminbox reindex` later)");
             break;
@@ -147,10 +221,14 @@ async function main() {
                     contentMd: c.contentMd,
                     provenance: { source: "extraction" },
                 });
-                console.log(`✓ Filed to inbox: ${doc.title} (${doc.id})`);
+                console.log(describeWrite(doc));
             }
             if (candidates.length === 0)
                 console.log("Nothing durable found to extract.");
+            break;
+        }
+        case "import": {
+            await runImport(memory);
             break;
         }
         case "reindex": {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { combineScores, MemoryService } from "../src/memory.js";
+import { combineScores, contentHash, MemoryService } from "../src/memory.js";
 import { cfg } from "./helpers/config.js";
 import { fakeDb } from "./helpers/fake-db.js";
 
@@ -145,5 +145,97 @@ describe("MemoryService.reindexAll", () => {
     const n = await new MemoryService(cfg, db).reindexAll();
     assert.equal(n, 1003);
     assert.equal(calls.filter((c) => c.op === "range").length, 3);
+  });
+});
+
+describe("contentHash", () => {
+  it("ignores CRLF and surrounding whitespace but not inner changes", () => {
+    assert.equal(contentHash("a\r\nb\n"), contentHash("  a\nb"));
+    assert.notEqual(contentHash("a b"), contentHash("a  b"));
+    assert.match(contentHash("x"), /^[0-9a-f]{64}$/);
+  });
+});
+
+describe("MemoryService.writeDocument deduplication", () => {
+  const stored = (over: Record<string, unknown> = {}) => ({
+    id: "d1",
+    title: "t",
+    content_md: "c",
+    content_hash: contentHash("c"),
+    status: "active",
+    version: 1,
+    source_key: null,
+    ...over,
+  });
+  type Ops = Array<{ op: string; args: unknown[] }>;
+  const has = (ops: Ops, op: string, ...args: unknown[]) =>
+    ops.some((o) => o.op === op && args.every((a, i) => o.args[i] === a));
+
+  it("returns identical existing content instead of inserting a copy", async () => {
+    const { db, calls } = fakeDb(({ table, ops }) => {
+      if (table === "meminbox_projects") return { data: { id: "p1" } };
+      if (table === "meminbox_documents" && has(ops, "eq", "content_hash")) return { data: [stored()] };
+      return { data: null };
+    });
+    const doc = await new MemoryService(cfg, db).writeDocument({ title: "other title", contentMd: "\nc\n" });
+    assert.equal(doc.outcome, "duplicate");
+    assert.equal(doc.id, "d1");
+    assert.ok(!calls.some((c) => c.op === "insert"));
+    const check = calls.find((c) => c.op === "neq")!;
+    assert.deepEqual(check.args, ["status", "archived"]);
+  });
+
+  it("inserts new content with its hash and source key", async () => {
+    const { db, calls } = fakeDb(({ table, ops }) => {
+      if (table === "meminbox_projects") return { data: { id: "p1" } };
+      if (table === "meminbox_documents" && has(ops, "insert")) return { data: stored({ status: "inbox" }) };
+      return { data: null };
+    });
+    const doc = await new MemoryService(cfg, db).writeDocument({ title: "t", contentMd: "c", sourceKey: "k1" });
+    assert.equal(doc.outcome, "created");
+    const row = calls.find((c) => c.op === "insert" && c.table === "meminbox_documents")!.args[0] as Record<string, unknown>;
+    assert.equal(row.content_hash, contentHash("c"));
+    assert.equal(row.source_key, "k1");
+  });
+
+  it("leaves a source-keyed document alone when nothing changed", async () => {
+    const { db, calls } = fakeDb(({ table, ops }) => {
+      if (table === "meminbox_projects") return { data: { id: "p1" } };
+      if (has(ops, "eq", "source_key", "k1")) return { data: stored({ source_key: "k1" }) };
+      return { data: null };
+    });
+    const doc = await new MemoryService(cfg, db).writeDocument({ title: "t", contentMd: "c", sourceKey: "k1" });
+    assert.equal(doc.outcome, "unchanged");
+    assert.ok(!calls.some((c) => ["insert", "update"].includes(c.op) && c.table === "meminbox_documents"));
+  });
+
+  it("updates a changed source in place, bumps the version and sends it back to the inbox", async () => {
+    const { db, calls } = fakeDb(({ table, ops }) => {
+      if (table === "meminbox_projects") return { data: { id: "p1" } };
+      if (table === "meminbox_documents" && has(ops, "update")) {
+        return { data: stored({ content_md: "new", status: "inbox", version: 2, source_key: "k1" }) };
+      }
+      if (has(ops, "eq", "source_key", "k1")) return { data: stored({ source_key: "k1" }) };
+      return { data: null };
+    });
+    const doc = await new MemoryService(cfg, db).writeDocument({ title: "t", contentMd: "new", sourceKey: "k1" });
+    assert.equal(doc.outcome, "updated");
+    const upd = calls.find((c) => c.op === "update")!.args[0] as Record<string, unknown>;
+    assert.equal(upd.version, 2);
+    assert.equal(upd.status, "inbox");
+    assert.equal(upd.content_hash, contentHash("new"));
+    assert.ok(!calls.some((c) => c.op === "insert" && c.table === "meminbox_documents"));
+    assert.ok(calls.some((c) => c.table === "meminbox_audit_log" && JSON.stringify(c.args).includes("update")));
+  });
+
+  it("never resurrects a document a human archived", async () => {
+    const { db, calls } = fakeDb(({ table, ops }) => {
+      if (table === "meminbox_projects") return { data: { id: "p1" } };
+      if (has(ops, "eq", "source_key", "k1")) return { data: stored({ source_key: "k1", status: "archived" }) };
+      return { data: null };
+    });
+    const doc = await new MemoryService(cfg, db).writeDocument({ title: "t", contentMd: "changed", sourceKey: "k1" });
+    assert.equal(doc.outcome, "archived");
+    assert.ok(!calls.some((c) => ["insert", "update"].includes(c.op) && c.table === "meminbox_documents"));
   });
 });

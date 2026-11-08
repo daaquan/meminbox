@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { chunkMarkdown } from "./chunk.js";
 import { embedBatch, embedText } from "./embeddings.js";
 /** pgvector accepts the "[1,2,3]" text literal; use it for inserts and RPC. */
@@ -6,6 +7,15 @@ function toVectorLiteral(vec) {
 }
 function errorMessage(err) {
     return err instanceof Error ? err.message : String(err);
+}
+/**
+ * Identity of a document's content for duplicate detection: sha256 of the
+ * body with CRLF normalised and surrounding whitespace trimmed. MUST match
+ * the backfill in supabase/migrations/20261110000001_dedupe.sql.
+ */
+export function contentHash(contentMd) {
+    const normalised = contentMd.replace(/\r\n/g, "\n").replace(/^[ \t\r\n]+|[ \t\r\n]+$/g, "");
+    return createHash("sha256").update(normalised, "utf8").digest("hex");
 }
 /**
  * Combine keyword and vector evidence for one document. Probabilistic OR:
@@ -62,7 +72,17 @@ export class MemoryService {
      * NOT trusted memory until promoted. That staging step is the guardrail
      * against one agent's mistake becoming every agent's fact.
      *
-     * Once the row is inserted the write has happened: a failure while
+     * Duplicates are not stored twice:
+     *  - with a `sourceKey` (imports), the document mirroring that source is
+     *    updated in place — or left alone when nothing changed. A changed
+     *    source goes back to the inbox (unless `status` says otherwise),
+     *    because its new content has not been reviewed. A document a human
+     *    archived stays archived.
+     *  - otherwise, identical content already in the project (inbox or
+     *    active) is returned instead of inserting a copy.
+     * `outcome` on the result says which of these happened.
+     *
+     * Once the row is written the write has happened: a failure while
      * building the derived index (e.g. the embedding API is down) is
      * reported on the result and in the audit log, never thrown — throwing
      * would make callers retry and store the document twice. `meminbox
@@ -75,12 +95,64 @@ export class MemoryService {
             source: "manual",
             ...input.provenance,
         };
+        const hash = contentHash(input.contentMd);
+        if (input.sourceKey) {
+            const { data: found, error: findError } = await this.db
+                .from("meminbox_documents")
+                .select("*")
+                .eq("project_id", projectId)
+                .eq("source_key", input.sourceKey)
+                .maybeSingle();
+            if (findError)
+                throw new Error(`writeDocument lookup failed: ${findError.message}`);
+            const existing = found;
+            if (existing) {
+                if (existing.status === "archived")
+                    return { ...existing, outcome: "archived" };
+                if (existing.content_hash === hash && existing.title === input.title) {
+                    return { ...existing, outcome: "unchanged" };
+                }
+                const { data, error } = await this.db
+                    .from("meminbox_documents")
+                    .update({
+                    title: input.title,
+                    content_md: input.contentMd,
+                    content_hash: hash,
+                    status: input.status ?? "inbox",
+                    source_agent: provenance.agent ?? null,
+                    provenance,
+                    version: (existing.version ?? 1) + 1,
+                    updated_at: new Date().toISOString(),
+                })
+                    .eq("id", existing.id)
+                    .select("*")
+                    .single();
+                if (error)
+                    throw new Error(`writeDocument update failed: ${error.message}`);
+                return this.indexAndAudit(data, "update", "updated");
+            }
+        }
+        const { data: dups, error: dupError } = await this.db
+            .from("meminbox_documents")
+            .select("*")
+            .eq("project_id", projectId)
+            .eq("content_hash", hash)
+            .neq("status", "archived")
+            .order("created_at")
+            .limit(1);
+        if (dupError)
+            throw new Error(`writeDocument duplicate check failed: ${dupError.message}`);
+        const dup = (dups ?? [])[0];
+        if (dup)
+            return { ...dup, outcome: "duplicate" };
         const { data, error } = await this.db
             .from("meminbox_documents")
             .insert({
             project_id: projectId,
             title: input.title,
             content_md: input.contentMd,
+            content_hash: hash,
+            source_key: input.sourceKey ?? null,
             status: input.status ?? "inbox",
             source_agent: provenance.agent ?? null,
             provenance,
@@ -89,7 +161,9 @@ export class MemoryService {
             .single();
         if (error)
             throw new Error(`writeDocument failed: ${error.message}`);
-        const doc = data;
+        return this.indexAndAudit(data, "write", "created");
+    }
+    async indexAndAudit(doc, action, outcome) {
         let indexError;
         try {
             await this.indexDocument(doc);
@@ -98,11 +172,11 @@ export class MemoryService {
             indexError = errorMessage(err);
             console.error(`meminbox: saved "${doc.title}" (${doc.id}) but could not index it for vector search: ${indexError}. Run \`meminbox reindex\` later.`);
         }
-        await this.audit("write", doc.id, {
+        await this.audit(action, doc.id, {
             status: doc.status,
             ...(indexError ? { indexError } : {}),
         });
-        return indexError ? { ...doc, indexError } : doc;
+        return indexError ? { ...doc, outcome, indexError } : { ...doc, outcome };
     }
     async setStatus(id, status) {
         const { data, error } = await this.db

@@ -127,6 +127,40 @@ meminbox add --title "How we deploy" --text "Staging first, then prod. See runbo
 meminbox search "deploy"
 ```
 
+### 6. Import what your agents already remember
+
+```bash
+meminbox import --dry-run          # show what would be imported, write nothing
+meminbox import                    # Claude Code + Codex + Gemini CLI, whatever exists here
+meminbox import --from claude-code # just one source (comma-separate several)
+meminbox import --dir .cursor/rules --agent cursor   # any folder of Markdown
+```
+
+| Source | Reads |
+|---|---|
+| `claude-code` | `~/.claude/projects/<project>/memory/*.md` (`MEMORY.md`, the index, is skipped; `$CLAUDE_CONFIG_DIR` respected). Each project lands in a meminbox project named after the repository. |
+| `codex` | `~/.codex/memories/**/*.md` (`$CODEX_HOME` respected) |
+| `gemini` | the `## Gemini Added Memories` section of `~/.gemini/GEMINI.md` |
+| `--dir <path>` | every `.md` / `.mdc` / `.markdown` file under the folder (hidden folders and `node_modules` skipped) |
+
+Imports are **safe to re-run**: every document remembers the file it
+came from, so a second run only updates files that changed (a changed
+file goes back to the inbox for review) and leaves the rest alone.
+Documents you archived stay archived. Imported documents land in the
+inbox unless you pass `--active`; `--project <slug>` puts everything in
+one project. Files that look like they contain credentials (API keys,
+tokens, private keys) are **skipped** — only the kind of secret is
+reported, never the value — unless you pass `--allow-secrets`.
+The source files are only read, never modified.
+
+### Duplicates
+
+Every write is checked against the project's existing memory: identical
+content (ignoring line endings and surrounding whitespace) that is already
+in the inbox or active returns the existing document instead of storing
+a second copy. `meminbox add` prints `Already stored`, and the MCP
+`memory_write` result says `outcome: "duplicate"`, so agents can tell.
+
 ### Configuration
 
 All settings are `MEMINBOX_*` (see `.env.example`). meminbox never reads
@@ -144,6 +178,10 @@ configured project:
 ```bash
 meminbox migrate          # via the Supabase CLI, or: --database-url <postgres-url>
 ```
+
+**0.5 adds duplicate detection** (`content_hash` / `source_key` columns,
+backfilled for existing documents) — run `meminbox migrate` before
+using 0.5 against an existing project.
 
 **0.4 renamed every table and function to `meminbox_*`** so the schema
 can never collide with an application's own `projects` / `documents`
@@ -199,8 +237,9 @@ promote too, set `MEMINBOX_ALLOW_AGENT_PROMOTE=1` in the environment or
   A small read/review UI for the inbox is the natural next step.
 - No remote (HTTP) MCP transport yet — stdio only, one process per client,
   all sharing the same database.
-- Muse's own file-based memory does not plug into this directly; bridging
-  it means an import/export sync, which is intentionally not faked here.
+- Import is one-way (files → meminbox). Nothing is written back to an
+  agent's own memory files, and near-duplicates (similar but not identical
+  text) are not detected yet.
 
 ## License
 

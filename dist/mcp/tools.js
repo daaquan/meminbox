@@ -67,6 +67,10 @@ export function createMcpServer(cfg, memory, version) {
             id: doc.id,
             status: doc.status,
             title: doc.title,
+            outcome: doc.outcome,
+            ...(doc.outcome === "duplicate"
+                ? { note: "Identical content is already stored as this document; nothing new was written." }
+                : {}),
             ...(doc.indexError ? { warning: `saved, but not indexed for vector search: ${doc.indexError}` } : {}),
         });
     });
@@ -86,7 +90,7 @@ export function createMcpServer(cfg, memory, version) {
                 projectSlug: project,
                 provenance: { source: "extraction" },
             });
-            written.push({ id: doc.id, title: doc.title });
+            written.push({ id: doc.id, title: doc.title, outcome: doc.outcome });
         }
         return text({ filedToInbox: written });
     });
