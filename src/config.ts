@@ -1,3 +1,5 @@
+import { loadEnvFiles } from "./dotenv.js";
+
 export interface Config {
   supabaseUrl: string;
   supabaseServiceRoleKey: string;
@@ -10,11 +12,16 @@ export interface Config {
 
 function required(name: string): string {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing required env var: ${name} (see .env.example)`);
+  if (!v) {
+    throw new Error(
+      `Missing required env var: ${name}. Run \`meminbox init\` or see .env.example`,
+    );
+  }
   return v;
 }
 
 export function loadConfig(): Config {
+  loadEnvFiles();
   return {
     supabaseUrl: required("SUPABASE_URL"),
     supabaseServiceRoleKey: required("SUPABASE_SERVICE_ROLE_KEY"),

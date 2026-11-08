@@ -58,44 +58,66 @@ idea) as a component — in that order, on purpose:
 ### 1. Create a Supabase project
 
 Use a **dedicated** project for memory (don't mix it into an app's project).
-Free tier is enough. Note the project URL and the **service role** key
-(Project Settings → API).
+Free tier is enough. You'll need:
 
-### 2. Apply the schema
+- the project URL and **service role** key (Project Settings → API)
+- optionally, the Postgres **connection string** (Project Settings →
+  Database) — if you provide it, `init` applies the schema for you;
+  it is used once and never saved
 
-Supabase SQL Editor → paste `supabase/migrations/20261108000001_init.sql` → Run.
-(Or `supabase db push` if you use the Supabase CLI.)
-
-### 3. Configure and run
-
-```bash
-npm install
-cp .env.example .env   # fill in SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY
-npm run cli -- list    # smoke test: should print nothing (empty memory)
-```
-
-### 4. Connect your agents (MCP, stdio)
-
-Set `MEMORY_ACTOR` differently per client so provenance says who wrote what.
-
-Claude Code:
+### 2. Install
 
 ```bash
-claude mcp add meminbox \
-  -e SUPABASE_URL=https://your-project.supabase.co \
-  -e SUPABASE_SERVICE_ROLE_KEY=... \
-  -e MEMORY_ACTOR=claude-code \
-  -- npx tsx /path/to/meminbox/src/mcp/server.ts
+npm install -g github:daaquan/meminbox
+# (once published to npm, this becomes: npm install -g meminbox)
 ```
 
-Codex / Cursor: same command and env, with `MEMORY_ACTOR=codex` / `cursor`,
-in each client's MCP config.
+### 3. Initialise
+
+```bash
+meminbox init
+```
+
+This prompts for your Supabase credentials, applies the schema when a
+connection string is provided (otherwise it tells you which SQL file to
+paste into the Supabase SQL Editor), saves your configuration to
+`~/.meminbox/.env` (mode `0600`), and smoke-tests the connection.
+
+Non-interactive form:
+
+```bash
+meminbox init --yes \
+  --url https://your-project.supabase.co \
+  --service-key <service-role-key> \
+  --database-url <postgres-connection-string>
+```
+
+### 4. Connect your agents
+
+```bash
+meminbox configure-agent --tool claude-code   # or: codex | cursor | claude-desktop
+```
+
+This writes the MCP server entry into the client's own config file
+(backing up the previous one to `<file>.bak`). The entry contains **no
+secrets** — the server reads `~/.meminbox/.env` itself. Each client gets
+its own `MEMORY_ACTOR`, so provenance shows which agent wrote what.
+Use `--print` to preview the entry without writing anything.
+Restart the client afterwards.
 
 ### 5. First memory
 
 ```bash
-npm run cli -- add --title "How we deploy" --text "Staging first, then prod. See runbook." --active
-npm run cli -- search "deploy"
+meminbox add --title "How we deploy" --text "Staging first, then prod. See runbook." --active
+meminbox search "deploy"
+```
+
+### Development (from a clone)
+
+```bash
+npm install        # also builds dist/ via the prepare script
+npm test
+npm run cli -- list
 ```
 
 ## MCP tools
@@ -112,8 +134,10 @@ npm run cli -- search "deploy"
 
 ## Security notes (read before connecting anything)
 
-- v0 access is **service-role from your own machines only**. The service
-  role key bypasses RLS; treat it like a root password. Never put it in a
+- Access is **service-role from your own machines only**. The service
+  role key bypasses RLS; treat it like a root password. `meminbox init`
+  keeps it in exactly one place — `~/.meminbox/.env`, mode `0600` — and
+  agent client configs never contain it. Never put it in a
   browser, a hosted endpoint, or a repo.
 - RLS is enabled with no public policies on purpose. A future remote MCP
   endpoint must add per-agent tokens and explicit policies first.

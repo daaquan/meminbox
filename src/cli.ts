@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { loadConfig } from "./config.js";
+import { runConfigureAgent } from "./agents.js";
+import { loadConfig, type Config } from "./config.js";
 import { createDb } from "./db.js";
 import { extractCandidates } from "./extract.js";
+import { runInit } from "./init.js";
 import { MemoryService } from "./memory.js";
 
 /**
- * Minimal CLI — the human's window into the same memory the agents use.
+ * The human's window into the same memory the agents use.
  *
+ * Setup:
+ *   meminbox init [--url <url> --service-key <key> --database-url <url>]
+ *   meminbox configure-agent --tool <claude-code|codex|cursor|claude-desktop> [--print]
+ *
+ * Memory:
  *   meminbox search <query>
  *   meminbox add --title <t> [--file <path> | --text <md>] [--active]
  *   meminbox list [--status inbox|active|archived]
@@ -16,8 +23,6 @@ import { MemoryService } from "./memory.js";
  *   meminbox reindex
  *   meminbox projects
  */
-const cfg = loadConfig();
-const memory = new MemoryService(cfg, createDb(cfg));
 
 const [cmd, ...rest] = process.argv.slice(2);
 
@@ -27,6 +32,32 @@ function flag(name: string): string | undefined {
 }
 function positional(i: number): string | undefined {
   return rest.filter((a) => !a.startsWith("--"))[i];
+}
+
+// Setup commands run BEFORE any config exists — they must not load it.
+if (cmd === "init") {
+  await runInit(rest);
+  process.exit(0);
+}
+if (cmd === "configure-agent") {
+  runConfigureAgent(rest);
+  process.exit(0);
+}
+
+let cfg: Config;
+let memory: MemoryService;
+try {
+  cfg = loadConfig();
+  memory = new MemoryService(cfg, createDb(cfg));
+} catch (err) {
+  if (cmd === undefined) {
+    console.log(
+      "usage: meminbox <init|configure-agent|search|add|list|promote|archive|extract|reindex|projects>\n" +
+        "start with: meminbox init",
+    );
+    process.exit(0);
+  }
+  throw err;
 }
 
 switch (cmd) {
@@ -104,7 +135,7 @@ switch (cmd) {
   }
   default:
     console.log(
-      "usage: meminbox <search|add|list|promote|archive|extract|reindex|projects>",
+      "usage: meminbox <init|configure-agent|search|add|list|promote|archive|extract|reindex|projects>",
     );
     process.exit(cmd ? 1 : 0);
 }
