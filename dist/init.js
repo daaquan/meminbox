@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
+import { SetupCancelled } from "./errors.js";
 import { applySqlFileViaCli, classifySupabaseKey, detectSupabaseCli, getServiceKeyViaCli, supabaseUrlForRef, } from "./supabase-cli.js";
 function parseFlags(argv) {
     const get = (name) => {
@@ -80,30 +81,35 @@ export function listMigrationFiles() {
 }
 async function applyMigrations(databaseUrl) {
     const client = new pg.Client({ connectionString: databaseUrl });
-    await client.connect();
     try {
+        await client.connect();
         for (const m of listMigrationSql()) {
             await client.query(m.sql);
-            console.log(`applied migration ${m.name}`);
+            console.log(`✓ Applied migration ${m.name}`);
         }
     }
+    catch (err) {
+        const detail = err instanceof Error ? err.message.split("\n")[0] : String(err);
+        throw new Error(`Could not apply the migrations with that connection string (${detail}). ` +
+            "Check the host and database password — or skip this step and apply the SQL from supabase/migrations/ in the dashboard's SQL Editor.");
+    }
     finally {
-        await client.end();
+        await client.end().catch(() => undefined);
     }
 }
 export async function runInit(argv) {
     const opts = parseFlags(argv);
     const envPath = meminboxEnvPath();
+    console.log("meminbox init — connect meminbox to a Supabase project.\n");
     if (existsSync(envPath) && !opts.force) {
         if (opts.yes) {
-            throw new Error(`${envPath} already exists. Re-run with --force to overwrite.`);
+            throw new Error(`A configuration already exists at ${envPath}. Re-run with --force to replace it.`);
         }
         const rl = createInterface({ input: process.stdin, output: process.stderr });
         const answer = await rl.question(`${envPath} already exists. Overwrite? [y/N] `);
         rl.close();
         if (!/^y(es)?$/i.test(answer.trim())) {
-            console.log("aborted — existing config kept");
-            return;
+            throw new SetupCancelled("Setup cancelled — your existing configuration was kept.");
         }
     }
     let { url, serviceKey, databaseUrl, openaiKey } = opts;
@@ -137,13 +143,13 @@ export async function runInit(argv) {
             else {
                 throw new Error("multiple Supabase projects found via CLI; pass --project-ref <ref>");
             }
-            console.log(`using Supabase CLI login — project ${project.name} (${project.ref})`);
+            console.log(`✓ Detected Supabase CLI login — using project ${project.name} (${project.ref})`);
             serviceKey = await getServiceKeyViaCli(project.ref);
             url = supabaseUrlForRef(project.ref);
             if (!opts.noMigrate) {
                 for (const f of listMigrationFiles()) {
                     await applySqlFileViaCli(project.ref, f.path);
-                    console.log(`applied migration ${f.name} via Supabase CLI`);
+                    console.log(`✓ Applied migration ${f.name} via Supabase CLI`);
                 }
                 cliSchemaApplied = true;
             }
@@ -155,12 +161,23 @@ export async function runInit(argv) {
         }
     }
     if (!opts.yes) {
+        if (!url) {
+            console.log("Find the project URL and keys in the Supabase dashboard: Project Settings → API.\n");
+        }
         const rl = createInterface({ input: process.stdin, output: process.stderr });
         if (!url)
             url = (await rl.question("Supabase project URL (https://….supabase.co): ")).trim();
         rl.close();
+        if (!url) {
+            throw new SetupCancelled("Setup cancelled — no project URL was entered, and nothing was saved.\n" +
+                "Tip: with the Supabase CLI installed, run `supabase login` first and init will detect your projects automatically.");
+        }
         if (!serviceKey)
             serviceKey = await promptSecret("Supabase service role key (input hidden): ");
+        if (!serviceKey) {
+            throw new SetupCancelled("Setup cancelled — no service role key was entered, and nothing was saved.\n" +
+                "The key is labelled service_role (or starts with sb_secret_) under Project Settings → API. The anon / publishable key will not work.");
+        }
         if (!databaseUrl && !opts.noMigrate && !cliSchemaApplied) {
             databaseUrl = await promptSecret("Postgres connection string for migrations (optional, Enter to skip — you can paste the SQL in the SQL Editor instead): ");
             if (!databaseUrl)
@@ -173,7 +190,7 @@ export async function runInit(argv) {
         }
     }
     if (!url || !serviceKey) {
-        throw new Error("SUPABASE_URL and the service role key are required. Pass --url / --service-key or run interactively.");
+        throw new Error("Missing required values for non-interactive setup: pass --url <project-url> and --service-key <key>, or run `meminbox init` interactively.");
     }
     if (!/^https:\/\//.test(url))
         throw new Error("Supabase URL must start with https://");
@@ -188,10 +205,11 @@ export async function runInit(argv) {
     else if (databaseUrl && !opts.noMigrate) {
         await applyMigrations(databaseUrl);
     }
-    else {
-        console.log("\nSchema not applied automatically. Paste the migration SQL into your Supabase SQL Editor:\n" +
-            listMigrationSql().map((m) => `  - supabase/migrations/${m.name} (in the meminbox package)`).join("\n") +
-            "\n");
+    else if (!opts.noMigrate) {
+        console.log("\nOne step left — the database schema is not applied yet. Either:\n" +
+            "  • paste the migration SQL into the Supabase dashboard's SQL Editor:\n" +
+            listMigrationSql().map((m) => `      supabase/migrations/${m.name} (in the meminbox package)`).join("\n") +
+            "\n  • or run: supabase db query --remote=<project-ref> -f supabase/migrations/<file>\n");
     }
     mkdirSync(meminboxHome(), { recursive: true, mode: 0o700 });
     const values = {
@@ -203,16 +221,20 @@ export async function runInit(argv) {
     if (openaiKey)
         values.OPENAI_API_KEY = openaiKey;
     writeFileSync(envPath, formatDotEnv(values), { mode: 0o600 });
-    console.log(`wrote ${envPath} (mode 0600; database URL was not saved)`);
+    console.log(`✓ Configuration saved to ${envPath} (file permissions 0600)`);
+    if (databaseUrl)
+        console.log("  The migration connection string was used once and was not saved.");
     // Smoke test: proves credentials AND schema in one round trip.
     const db = createClient(url, serviceKey, { auth: { persistSession: false } });
     const { error } = await db.from("projects").select("slug").limit(1);
     if (error) {
-        console.log(`\nConnected to Supabase, but the meminbox schema is not reachable (${error.message}).\n` +
-            "If you skipped migrations, apply the SQL first, then verify with: meminbox list");
+        console.log("\nYour configuration is saved, but the meminbox tables are not reachable yet.\n" +
+            "Most likely the schema has not been applied to this project. Apply the migration\n" +
+            "above, then verify with: meminbox list");
         return;
     }
-    console.log("\nSetup complete. Next steps:");
+    console.log("\n✓ Setup complete — meminbox is connected to your Supabase project.");
+    console.log("\nNext steps:");
     console.log("  meminbox configure-agent --tool claude-code   # or codex / cursor / claude-desktop");
     console.log("  meminbox add --title 'First memory' --text '…' --active");
     console.log("  meminbox search 'First memory'");

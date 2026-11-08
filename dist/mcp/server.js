@@ -16,7 +16,7 @@ import { MemoryService } from "../memory.js";
  */
 const cfg = loadConfig();
 const memory = new MemoryService(cfg, createDb(cfg));
-const server = new McpServer({ name: "meminbox", version: "0.3.1" });
+const server = new McpServer({ name: "meminbox", version: "0.3.2" });
 function text(payload) {
     return {
         content: [
