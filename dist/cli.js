@@ -5,7 +5,7 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { friendlyError, isDebug, SetupCancelled } from "./errors.js";
 import { extractCandidates } from "./extract.js";
-import { runInit } from "./init.js";
+import { runInit, runMigrate } from "./init.js";
 import { MemoryService } from "./memory.js";
 /**
  * The human's window into the same memory the agents use.
@@ -14,6 +14,7 @@ import { MemoryService } from "./memory.js";
  *   meminbox init [--url <url> --service-key <key> --database-url <url>]
  *                 (auto-detects `supabase login` when the Supabase CLI is present)
  *   meminbox configure-agent --tool <claude-code|codex|cursor|claude-desktop> [--print]
+ *   meminbox migrate [--project-ref <ref> | --database-url <url>]   (after upgrading)
  *
  * Memory:
  *   meminbox search <query>
@@ -29,6 +30,7 @@ const USAGE = `meminbox — shared memory for your AI agents
 Get started:
   meminbox init                 connect to your Supabase project
   meminbox configure-agent --tool <claude-code|codex|cursor|claude-desktop>
+  meminbox migrate              apply schema updates after upgrading meminbox
 
 Memory commands:
   meminbox search <query>
@@ -61,6 +63,10 @@ async function main() {
         return;
     }
     const cfg = loadConfig();
+    if (cmd === "migrate") {
+        await runMigrate(rest, cfg.supabaseUrl);
+        return;
+    }
     const memory = new MemoryService(cfg, createDb(cfg));
     switch (cmd) {
         case "search": {

@@ -14,11 +14,11 @@ This project borrows Cerefox's philosophy and uses extraction (the mem0
 idea) as a component — in that order, on purpose:
 
 1. **Documents are the source of truth.**
-   Memory is human-readable Markdown in a Postgres table (`documents`).
+   Memory is human-readable Markdown in a Postgres table (`meminbox_documents`).
    You can read it, edit it, export it with `pg_dump`, and leave with it.
    No proprietary payload, no lock-in.
 2. **Vectors are a derived index, never the truth.**
-   `document_chunks` + pgvector exist only to make search better. Drop them
+   `meminbox_document_chunks` + pgvector exist only to make search better. Drop them
    and run `meminbox reindex` and they come back. Changing the embedding
    model is a reindex, not a migration.
 3. **Agent writes land in an inbox first.**
@@ -26,7 +26,7 @@ idea) as a component — in that order, on purpose:
    agent's fact. So writes default to `status = 'inbox'` and only become
    trusted memory on `promote`. Every document carries **provenance**
    (which agent, which session, what source) and every action is in
-   `audit_log`.
+   `meminbox_audit_log`.
 4. **Extraction is a replaceable component, not the foundation.**
    `src/extract.ts` turns raw transcripts into inbox candidates. It is a
    small interface — swap in mem0, a local model, anything — because
@@ -47,9 +47,9 @@ idea) as a component — in that order, on purpose:
                                                    │ service role (local only)
                                         ┌──────────▼───────────────┐
                                         │ Your Supabase project    │
-                                        │  documents  (truth)      │
-                                        │  document_chunks (index) │
-                                        │  audit_log               │
+                                        │  meminbox_documents      │
+                                        │  meminbox_document_chunks│
+                                        │  meminbox_audit_log      │
                                         └──────────────────────────┘
 ```
 
@@ -123,6 +123,21 @@ Restart the client afterwards.
 meminbox add --title "How we deploy" --text "Staging first, then prod. See runbook." --active
 meminbox search "deploy"
 ```
+
+### Upgrading
+
+After installing a new version, apply any schema changes to your
+configured project:
+
+```bash
+meminbox migrate          # via the Supabase CLI, or: --database-url <postgres-url>
+```
+
+**0.4 renamed every table and function to `meminbox_*`** so the schema
+can never collide with an application's own `projects` / `documents`
+tables. `meminbox migrate` copies your existing data across once; the old
+tables are left in place for you to drop after checking (the statements
+are in `supabase/migrations/20261109000001_copy_legacy_tables.sql`).
 
 ### Development (from a clone)
 

@@ -27,3 +27,17 @@ describe("friendlyError", () => {
     assert.equal(friendlyError("plain failure"), "plain failure");
   });
 });
+
+describe("friendlyError schema hint", () => {
+  it("points at `meminbox migrate` when a meminbox table is missing", () => {
+    const out = friendlyError(
+      new Error("listDocuments failed: Could not find the table 'public.meminbox_documents' in the schema cache"),
+    );
+    assert.match(out, /meminbox migrate/);
+  });
+
+  it("does not fire for unrelated missing relations", () => {
+    const out = friendlyError(new Error('relation "public.orders" does not exist'));
+    assert.doesNotMatch(out, /meminbox migrate/);
+  });
+});

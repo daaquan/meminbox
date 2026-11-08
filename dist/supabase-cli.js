@@ -80,6 +80,11 @@ export function parseApiKeys(data) {
 export function supabaseUrlForRef(ref) {
     return `https://${ref}.supabase.co`;
 }
+/** Inverse of supabaseUrlForRef; null for custom domains / self-hosting. */
+export function refFromSupabaseUrl(url) {
+    const m = /^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/i.exec(url.trim());
+    return m ? m[1] : null;
+}
 /**
  * Classify a Supabase API key WITHOUT contacting the server.
  * Legacy keys are JWTs whose payload carries a `role` claim; new keys

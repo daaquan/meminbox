@@ -14,6 +14,10 @@ export class SetupCancelled extends Error {
 }
 const HINTS = [
     {
+        match: /meminbox_\w+.*(does not exist|schema cache)|(does not exist|schema cache).*meminbox_\w+/i,
+        hint: "Hint: the meminbox schema is missing or out of date in this project. Run `meminbox migrate` (meminbox 0.4 renamed its tables to meminbox_*; existing data is copied over).",
+    },
+    {
         match: /row-level security/i,
         hint: "Hint: this usually means the configured key is the anon / publishable key. meminbox needs the service role (secret) key — re-run `meminbox init` and paste the key labelled service_role / sb_secret_ from Project Settings → API.",
     },

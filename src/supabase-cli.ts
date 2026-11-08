@@ -123,6 +123,12 @@ export function supabaseUrlForRef(ref: string): string {
   return `https://${ref}.supabase.co`;
 }
 
+/** Inverse of supabaseUrlForRef; null for custom domains / self-hosting. */
+export function refFromSupabaseUrl(url: string): string | null {
+  const m = /^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/i.exec(url.trim());
+  return m ? m[1]! : null;
+}
+
 export type KeyKind = "service" | "anon" | "unknown";
 
 /**

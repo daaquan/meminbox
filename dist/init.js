@@ -5,7 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
 import { SetupCancelled } from "./errors.js";
-import { applySqlFileViaCli, classifySupabaseKey, detectSupabaseCli, getServiceKeyViaCli, supabaseUrlForRef, } from "./supabase-cli.js";
+import { applySqlFileViaCli, classifySupabaseKey, detectSupabaseCli, getServiceKeyViaCli, refFromSupabaseUrl, supabaseUrlForRef, } from "./supabase-cli.js";
 function parseFlags(argv) {
     const get = (name) => {
         const i = argv.indexOf(`--${name}`);
@@ -97,6 +97,38 @@ async function applyMigrations(databaseUrl) {
         await client.end().catch(() => undefined);
     }
 }
+/**
+ * `meminbox migrate` — apply the bundled migrations to the ALREADY
+ * configured project (e.g. after upgrading meminbox). Uses a one-off
+ * Postgres connection string when given, otherwise the Supabase CLI.
+ */
+export async function runMigrate(argv, supabaseUrl) {
+    const get = (name) => {
+        const i = argv.indexOf(`--${name}`);
+        return i >= 0 ? argv[i + 1] : undefined;
+    };
+    const databaseUrl = get("database-url");
+    if (databaseUrl) {
+        await applyMigrations(databaseUrl);
+        console.log("✓ Schema is up to date. The connection string was used once and was not saved.");
+        return;
+    }
+    const ref = get("project-ref") ?? refFromSupabaseUrl(supabaseUrl);
+    if (!ref) {
+        throw new Error(`Cannot tell the project ref from ${supabaseUrl}. Pass --project-ref <ref> or --database-url <postgres-url>.`);
+    }
+    const det = await detectSupabaseCli();
+    if (det.status !== "ready") {
+        throw new Error("The Supabase CLI is not available or not logged in. Run `supabase login`, or pass --database-url <postgres-url>, " +
+            "or paste the files in supabase/migrations/ into the dashboard's SQL Editor.");
+    }
+    console.log(`Applying meminbox migrations to the configured project (${ref})…`);
+    for (const f of listMigrationFiles()) {
+        await applySqlFileViaCli(ref, f.path);
+        console.log(`✓ Applied migration ${f.name}`);
+    }
+    console.log("✓ Schema is up to date.");
+}
 async function ask(question) {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
     try {
@@ -134,7 +166,7 @@ export async function chooseCliProject(projects, opts, prompt = ask) {
             ? "it is the project `supabase link` points at in this directory"
             : "it is the only project on your Supabase account";
         console.log(`Supabase CLI detected. Suggested project: ${suggested.name} (${suggested.ref}) — ${why}.`);
-        console.log("meminbox will create its tables in this project. Use a dedicated project, not an app's.");
+        console.log("meminbox will create its own tables (meminbox_*) in this project. Use a dedicated project, not an app's.");
         const answer = await prompt(`Use ${suggested.name} (${suggested.ref})? [y/N] `);
         if (/^y(es)?$/i.test(answer))
             return suggested;
@@ -263,7 +295,7 @@ export async function runInit(argv) {
         console.log("  The migration connection string was used once and was not saved.");
     // Smoke test: proves credentials AND schema in one round trip.
     const db = createClient(url, serviceKey, { auth: { persistSession: false } });
-    const { error } = await db.from("projects").select("slug").limit(1);
+    const { error } = await db.from("meminbox_projects").select("slug").limit(1);
     if (error) {
         console.log("\nYour configuration is saved, but the meminbox tables are not reachable yet.\n" +
             "Most likely the schema has not been applied to this project. Apply the migration\n" +

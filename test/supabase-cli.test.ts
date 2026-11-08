@@ -5,6 +5,7 @@ import {
   interpretProjectsListResult,
   parseProjectsList,
   pickServiceKey,
+  refFromSupabaseUrl,
   supabaseUrlForRef,
 } from "../src/supabase-cli.js";
 
@@ -70,6 +71,17 @@ describe("pickServiceKey", () => {
       null,
     );
     assert.equal(pickServiceKey([]), null);
+  });
+});
+
+describe("refFromSupabaseUrl", () => {
+  it("round-trips supabaseUrlForRef", () => {
+    assert.equal(refFromSupabaseUrl(supabaseUrlForRef("barlktqxhecnoadyjvat")), "barlktqxhecnoadyjvat");
+    assert.equal(refFromSupabaseUrl("https://barlktqxhecnoadyjvat.supabase.co/"), "barlktqxhecnoadyjvat");
+  });
+
+  it("returns null for custom domains", () => {
+    assert.equal(refFromSupabaseUrl("https://db.example.com"), null);
   });
 });
 

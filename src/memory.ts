@@ -24,7 +24,7 @@ export class MemoryService {
 
   async ensureProject(slug: string, name?: string): Promise<string> {
     const { data, error } = await this.db
-      .from("projects")
+      .from("meminbox_projects")
       .upsert({ slug, name: name ?? slug }, { onConflict: "slug" })
       .select("id")
       .single();
@@ -34,7 +34,7 @@ export class MemoryService {
 
   async listProjects(): Promise<Array<{ slug: string; name: string }>> {
     const { data, error } = await this.db
-      .from("projects")
+      .from("meminbox_projects")
       .select("slug, name")
       .order("slug");
     if (error) throw new Error(`listProjects failed: ${error.message}`);
@@ -64,7 +64,7 @@ export class MemoryService {
       ...input.provenance,
     };
     const { data, error } = await this.db
-      .from("documents")
+      .from("meminbox_documents")
       .insert({
         project_id: projectId,
         title: input.title,
@@ -87,7 +87,7 @@ export class MemoryService {
     status: DocumentStatus,
   ): Promise<MemoryDocument> {
     const { data, error } = await this.db
-      .from("documents")
+      .from("meminbox_documents")
       .update({ status, updated_at: new Date().toISOString() })
       .eq("id", id)
       .select("*")
@@ -103,7 +103,7 @@ export class MemoryService {
 
   async getDocument(id: string): Promise<MemoryDocument | null> {
     const { data, error } = await this.db
-      .from("documents")
+      .from("meminbox_documents")
       .select("*")
       .eq("id", id)
       .maybeSingle();
@@ -116,7 +116,7 @@ export class MemoryService {
     limit?: number;
   } = {}): Promise<MemoryDocument[]> {
     let q = this.db
-      .from("documents")
+      .from("meminbox_documents")
       .select("*")
       .order("updated_at", { ascending: false })
       .limit(opts.limit ?? 50);
@@ -133,7 +133,7 @@ export class MemoryService {
     const chunks = chunkMarkdown(`${doc.title}\n\n${doc.content_md}`);
     const embeddings = await embedBatch(this.cfg, chunks);
     const { error: delError } = await this.db
-      .from("document_chunks")
+      .from("meminbox_document_chunks")
       .delete()
       .eq("document_id", doc.id);
     if (delError) throw new Error(`indexDocument delete failed: ${delError.message}`);
@@ -144,7 +144,7 @@ export class MemoryService {
       content,
       embedding: embeddings[i] ? toVectorLiteral(embeddings[i]!) : null,
     }));
-    const { error } = await this.db.from("document_chunks").insert(rows);
+    const { error } = await this.db.from("meminbox_document_chunks").insert(rows);
     if (error) throw new Error(`indexDocument insert failed: ${error.message}`);
   }
 
@@ -172,7 +172,7 @@ export class MemoryService {
     const byDoc = new Map<string, SearchHit>();
 
     // Keyword path
-    const { data: kw, error: kwError } = await this.db.rpc("search_documents", {
+    const { data: kw, error: kwError } = await this.db.rpc("meminbox_search_documents", {
       p_query: query,
       p_limit: limit * 3,
       p_status: status,
@@ -198,7 +198,7 @@ export class MemoryService {
     // Vector path (only when an embedding provider is configured)
     const queryVec = await embedText(this.cfg, query);
     if (queryVec) {
-      const { data: vec, error: vecError } = await this.db.rpc("match_chunks", {
+      const { data: vec, error: vecError } = await this.db.rpc("meminbox_match_chunks", {
         p_embedding: toVectorLiteral(queryVec),
         p_limit: limit * 3,
         p_status: status,
@@ -240,7 +240,7 @@ export class MemoryService {
     documentId: string | null,
     metadata: Record<string, unknown>,
   ) {
-    const { error } = await this.db.from("audit_log").insert({
+    const { error } = await this.db.from("meminbox_audit_log").insert({
       actor: this.cfg.actor,
       action,
       document_id: documentId,
