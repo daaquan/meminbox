@@ -117,6 +117,33 @@ export function supabaseUrlForRef(ref: string): string {
   return `https://${ref}.supabase.co`;
 }
 
+export type KeyKind = "service" | "anon" | "unknown";
+
+/**
+ * Classify a Supabase API key WITHOUT contacting the server.
+ * Legacy keys are JWTs whose payload carries a `role` claim; new keys
+ * are self-describing via their sb_secret_ / sb_publishable_ prefix.
+ * Used by init to catch the classic mistake — pasting the anon key —
+ * before it fails later as a confusing RLS error.
+ */
+export function classifySupabaseKey(key: string): KeyKind {
+  if (key.startsWith("sb_secret_")) return "service";
+  if (key.startsWith("sb_publishable_")) return "anon";
+  const parts = key.split(".");
+  if (parts.length === 3) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(parts[1]!, "base64url").toString("utf8"),
+      ) as { role?: unknown };
+      if (payload.role === "service_role") return "service";
+      if (payload.role === "anon") return "anon";
+    } catch {
+      // Not a decodable JWT — fall through to unknown.
+    }
+  }
+  return "unknown";
+}
+
 export type CliDetection =
   | { status: "not-installed" }
   | { status: "not-logged-in" }

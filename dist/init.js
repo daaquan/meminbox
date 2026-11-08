@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import pg from "pg";
 import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
-import { applySqlFileViaCli, detectSupabaseCli, getServiceKeyViaCli, supabaseUrlForRef, } from "./supabase-cli.js";
+import { applySqlFileViaCli, classifySupabaseKey, detectSupabaseCli, getServiceKeyViaCli, supabaseUrlForRef, } from "./supabase-cli.js";
 function parseFlags(argv) {
     const get = (name) => {
         const i = argv.indexOf(`--${name}`);
@@ -177,6 +177,11 @@ export async function runInit(argv) {
     }
     if (!/^https:\/\//.test(url))
         throw new Error("Supabase URL must start with https://");
+    if (classifySupabaseKey(serviceKey) === "anon") {
+        throw new Error("That key is the anon / publishable key — it is constrained by RLS and cannot write memory. " +
+            "Use the service role (secret) key instead: Supabase Dashboard → Project Settings → API. " +
+            "Nothing was saved.");
+    }
     if (cliSchemaApplied) {
         // Schema already applied through the Supabase CLI above.
     }

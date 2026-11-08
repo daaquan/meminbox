@@ -6,6 +6,7 @@ import pg from "pg";
 import { formatDotEnv, meminboxEnvPath, meminboxHome } from "./dotenv.js";
 import {
   applySqlFileViaCli,
+  classifySupabaseKey,
   detectSupabaseCli,
   getServiceKeyViaCli,
   supabaseUrlForRef,
@@ -224,6 +225,13 @@ export async function runInit(argv: string[]): Promise<void> {
     );
   }
   if (!/^https:\/\//.test(url)) throw new Error("Supabase URL must start with https://");
+  if (classifySupabaseKey(serviceKey) === "anon") {
+    throw new Error(
+      "That key is the anon / publishable key — it is constrained by RLS and cannot write memory. " +
+        "Use the service role (secret) key instead: Supabase Dashboard → Project Settings → API. " +
+        "Nothing was saved.",
+    );
+  }
 
   if (cliSchemaApplied) {
     // Schema already applied through the Supabase CLI above.

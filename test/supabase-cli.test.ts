@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  classifySupabaseKey,
   parseProjectsList,
   pickServiceKey,
   supabaseUrlForRef,
@@ -69,5 +70,31 @@ describe("supabaseUrlForRef", () => {
       supabaseUrlForRef("barlktqxhecnoadyjvat"),
       "https://barlktqxhecnoadyjvat.supabase.co",
     );
+  });
+});
+
+function fakeJwt(payload: Record<string, unknown>): string {
+  const b64 = (o: unknown) =>
+    Buffer.from(JSON.stringify(o)).toString("base64url");
+  return `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.sig`;
+}
+
+describe("classifySupabaseKey", () => {
+  it("recognises new-style secret and publishable keys by prefix", () => {
+    assert.equal(classifySupabaseKey("sb_secret_abc123"), "service");
+    assert.equal(classifySupabaseKey("sb_publishable_abc123"), "anon");
+  });
+
+  it("reads the role claim of legacy JWT keys", () => {
+    assert.equal(
+      classifySupabaseKey(fakeJwt({ role: "service_role", ref: "x" })),
+      "service",
+    );
+    assert.equal(classifySupabaseKey(fakeJwt({ role: "anon", ref: "x" })), "anon");
+  });
+
+  it("returns unknown for anything else", () => {
+    assert.equal(classifySupabaseKey("not-a-key"), "unknown");
+    assert.equal(classifySupabaseKey(fakeJwt({ sub: "123" })), "unknown");
   });
 });
