@@ -89,9 +89,11 @@ is installed and you have run `supabase login`, `meminbox init` detects
 it and does everything through the CLI: it lists your projects, fetches
 the chosen project's service key, and applies the schema — no dashboard
 copy-paste. Your CLI access token never leaves the CLI; meminbox only
-consumes its command output and stores the project's own key. With
-several projects, pass `--project-ref <ref>` (or `--no-cli` to force the
-manual flow).
+consumes its command output and stores the project's own key. It always
+asks before using a project — even the one `supabase link` points at, or
+your account's only project — because that is often an app's production
+project. Non-interactive runs (`--yes`) need `--project-ref <ref>` unless
+the account has exactly one project (`--no-cli` forces the manual flow).
 
 Non-interactive form:
 

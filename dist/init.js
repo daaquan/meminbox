@@ -97,6 +97,59 @@ async function applyMigrations(databaseUrl) {
         await client.end().catch(() => undefined);
     }
 }
+async function ask(question) {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    try {
+        return (await rl.question(question)).trim();
+    }
+    finally {
+        rl.close();
+    }
+}
+/**
+ * Pick the Supabase project init will write meminbox's schema into.
+ *
+ * Never chosen silently: a `supabase link` in the current directory or a
+ * single-project account is only a SUGGESTION the user must confirm,
+ * because the link usually points at the app repo's own (often
+ * production) project. Non-interactive runs need --project-ref unless
+ * the account has exactly one project.
+ */
+export async function chooseCliProject(projects, opts, prompt = ask) {
+    if (opts.projectRef) {
+        const project = projects.find((p) => p.ref === opts.projectRef);
+        if (!project) {
+            throw new Error(`project ${opts.projectRef} was not returned by \`supabase projects list\``);
+        }
+        return project;
+    }
+    if (opts.yes) {
+        if (projects.length === 1)
+            return projects[0];
+        throw new Error("multiple Supabase projects found via CLI; pass --project-ref <ref> to choose one non-interactively");
+    }
+    const suggested = projects.find((p) => p.linked) ?? (projects.length === 1 ? projects[0] : undefined);
+    if (suggested) {
+        const why = suggested.linked
+            ? "it is the project `supabase link` points at in this directory"
+            : "it is the only project on your Supabase account";
+        console.log(`Supabase CLI detected. Suggested project: ${suggested.name} (${suggested.ref}) — ${why}.`);
+        console.log("meminbox will create its tables in this project. Use a dedicated project, not an app's.");
+        const answer = await prompt(`Use ${suggested.name} (${suggested.ref})? [y/N] `);
+        if (/^y(es)?$/i.test(answer))
+            return suggested;
+        if (projects.length === 1) {
+            throw new SetupCancelled("Setup cancelled — nothing was changed. Create a dedicated Supabase project for meminbox, then run `meminbox init` again (or use --no-cli for manual setup).");
+        }
+    }
+    console.log("Your Supabase projects:");
+    projects.forEach((p, i) => console.log(`  ${i + 1}. ${p.name} (${p.ref})${p.linked ? "  ← linked here" : ""}`));
+    const answer = await prompt(`Select project [1-${projects.length}]: `);
+    const project = projects[Number(answer) - 1];
+    if (!project)
+        throw new Error("invalid project selection");
+    return project;
+}
 export async function runInit(argv) {
     const opts = parseFlags(argv);
     const envPath = meminboxEnvPath();
@@ -120,34 +173,7 @@ export async function runInit(argv) {
     if (!url && !serviceKey && !opts.noCli) {
         const det = await detectSupabaseCli();
         if (det.status === "ready" && det.projects.length > 0) {
-            let project;
-            const linkedProject = det.projects.find((p) => p.linked);
-            if (opts.projectRef) {
-                project = det.projects.find((p) => p.ref === opts.projectRef);
-                if (!project) {
-                    throw new Error(`project ${opts.projectRef} was not returned by \`supabase projects list\``);
-                }
-            }
-            else if (linkedProject) {
-                // `supabase link` already answered "which project?" — don't ask again.
-                project = linkedProject;
-            }
-            else if (det.projects.length === 1) {
-                project = det.projects[0];
-            }
-            else if (!opts.yes) {
-                console.log("Supabase CLI detected. Your projects:");
-                det.projects.forEach((p, i) => console.log(`  ${i + 1}. ${p.name} (${p.ref})`));
-                const rl = createInterface({ input: process.stdin, output: process.stderr });
-                const answer = await rl.question(`Select project [1-${det.projects.length}]: `);
-                rl.close();
-                project = det.projects[Number(answer.trim()) - 1];
-                if (!project)
-                    throw new Error("invalid project selection");
-            }
-            else {
-                throw new Error("multiple Supabase projects found via CLI; pass --project-ref <ref>");
-            }
+            const project = await chooseCliProject(det.projects, opts);
             console.log(`✓ Detected Supabase CLI login — using project ${project.name} (${project.ref})`);
             serviceKey = await getServiceKeyViaCli(project.ref);
             url = supabaseUrlForRef(project.ref);
