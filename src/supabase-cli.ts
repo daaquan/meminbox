@@ -153,24 +153,44 @@ export function classifySupabaseKey(key: string): KeyKind {
 export type CliDetection =
   | { status: "not-installed" }
   | { status: "not-logged-in" }
+  | { status: "error"; detail: string }
   | { status: "ready"; projects: CliProject[] };
+
+/**
+ * Interpret a `supabase projects list` invocation. Pure and unit-tested:
+ * a failed listing must never be silently misread as "not logged in" —
+ * the caller surfaces `detail` so the real reason stays visible.
+ */
+export function interpretProjectsListResult(
+  code: number,
+  stdout: string,
+  stderr: string,
+): CliDetection {
+  if (code !== 0) {
+    if (/access token not provided|not logged in/i.test(stderr)) {
+      return { status: "not-logged-in" };
+    }
+    return {
+      status: "error",
+      detail: (stderr.trim() || `supabase projects list exited with code ${code}`).slice(0, 300),
+    };
+  }
+  try {
+    return { status: "ready", projects: parseProjectsList(JSON.parse(stdout)) };
+  } catch {
+    return {
+      status: "error",
+      detail: `supabase projects list returned unexpected output: ${stdout.trim().slice(0, 200)}`,
+    };
+  }
+}
 
 /** Detect the Supabase CLI and, if logged in, list its projects. */
 export async function detectSupabaseCli(): Promise<CliDetection> {
   const version = await runSupabase(["--version"], 15_000);
   if (version.code !== 0) return { status: "not-installed" };
   const list = await runSupabase(["projects", "list", "--output-format", "json"], 30_000);
-  if (list.code !== 0) {
-    if (/access token not provided|not logged in/i.test(list.stderr)) {
-      return { status: "not-logged-in" };
-    }
-    return { status: "not-logged-in" };
-  }
-  try {
-    return { status: "ready", projects: parseProjectsList(JSON.parse(list.stdout)) };
-  } catch {
-    return { status: "not-logged-in" };
-  }
+  return interpretProjectsListResult(list.code, list.stdout, list.stderr);
 }
 
 /** Fetch the project's privileged (service) key via the CLI. */

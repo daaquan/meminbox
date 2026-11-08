@@ -160,9 +160,15 @@ export async function runInit(argv) {
             }
         }
         else if (!opts.yes) {
-            console.log(det.status === "not-installed"
-                ? "Supabase CLI not found — continuing with manual setup. (Tip: install it and run `supabase login` for the one-step flow.)"
-                : "Supabase CLI is not logged in — run `supabase login` for the one-step flow, or continue manually.");
+            if (det.status === "not-installed") {
+                console.log("Supabase CLI not found — continuing with manual setup. (Tip: install it and run `supabase login` for the one-step flow.)");
+            }
+            else if (det.status === "not-logged-in") {
+                console.log("Supabase CLI is not logged in — run `supabase login` for the one-step flow, or continue manually.");
+            }
+            else if (det.status === "error") {
+                console.log(`Supabase CLI was found, but listing projects failed — continuing with manual setup.\n  Reason: ${det.detail}`);
+            }
         }
     }
     if (!opts.yes) {

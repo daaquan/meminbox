@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   classifySupabaseKey,
+  interpretProjectsListResult,
   parseProjectsList,
   pickServiceKey,
   supabaseUrlForRef,
@@ -86,6 +87,34 @@ function fakeJwt(payload: Record<string, unknown>): string {
     Buffer.from(JSON.stringify(o)).toString("base64url");
   return `${b64({ alg: "HS256", typ: "JWT" })}.${b64(payload)}.sig`;
 }
+
+describe("interpretProjectsListResult", () => {
+  it("maps the access-token error to not-logged-in", () => {
+    const det = interpretProjectsListResult(1, "", "Access token not provided. Supply an access token by running `supabase login`");
+    assert.equal(det.status, "not-logged-in");
+  });
+
+  it("keeps unknown failures visible as errors, never as not-logged-in", () => {
+    const det = interpretProjectsListResult(1, "", "lookup api.supabase.com: no such host");
+    assert.equal(det.status, "error");
+    if (det.status === "error") assert.match(det.detail, /no such host/);
+  });
+
+  it("parses a successful listing", () => {
+    const det = interpretProjectsListResult(
+      0,
+      JSON.stringify([{ id: "barlktqxhecnoadyjvat", name: "p", linked: true }]),
+      "",
+    );
+    assert.equal(det.status, "ready");
+    if (det.status === "ready") assert.equal(det.projects[0]?.linked, true);
+  });
+
+  it("reports non-JSON success output as an error with the output attached", () => {
+    const det = interpretProjectsListResult(0, "not json at all", "");
+    assert.equal(det.status, "error");
+  });
+});
 
 describe("classifySupabaseKey", () => {
   it("recognises new-style secret and publishable keys by prefix", () => {
